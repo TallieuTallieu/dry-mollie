@@ -1,0 +1,14 @@
+{
+  "name": "reinvanoyen/dry-mollie",
+  "minimum-stability": "dev",
+  "description": "Mollie payments",
+  "type": "library",
+  "require": {
+      "mollie/mollie-api-php": "^2.12"
+  },
+  "autoload": {
+    "psr-4": {
+      "Tnt\\Mollie\\": "src/"
+    }
+  }
+}
