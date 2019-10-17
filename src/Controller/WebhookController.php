@@ -27,35 +27,27 @@ class WebhookController
             throw new NotFound();
         }
 
-        if ($payment->isRefunded()) {
+        if ($payment->isPaid()) {
 
-            // Payment refunded
-            Dispatcher::dispatch(PaymentRefunded::class, new PaymentRefunded($order));
+            // Payment complete
+            Dispatcher::dispatch(Paid::class, new Paid($order));
 
+        } elseif (! $payment->isOpen()) {
+
+            if ($payment->isExpired()) {
+
+                // Payment is expired
+                Dispatcher::dispatch(PaymentExpired::class, new PaymentExpired($order));
+
+            } elseif ($payment->isCancelled()) {
+
+                // Payment was canceled by user
+                Dispatcher::dispatch(PaymentCanceled::class, new PaymentCanceled($order));
+            }
         } else {
 
-            if ($payment->isPaid()) {
-
-                // Payment complete
-                Dispatcher::dispatch(Paid::class, new Paid($order));
-
-            } elseif (! $payment->isOpen()) {
-
-                if ($payment->isExpired()) {
-
-                    // Payment is expired
-                    Dispatcher::dispatch(PaymentExpired::class, new PaymentExpired($order));
-
-                } elseif ($payment->isCancelled()) {
-
-                    // Payment was canceled by user
-                    Dispatcher::dispatch(PaymentCanceled::class, new PaymentCanceled($order));
-                }
-            } else {
-
-                // Generic payment failed
-                Dispatcher::dispatch(PaymentFailed::class, new PaymentFailed($order));
-            }
+            // Generic payment failed
+            Dispatcher::dispatch(PaymentFailed::class, new PaymentFailed($order));
         }
     }
 }
