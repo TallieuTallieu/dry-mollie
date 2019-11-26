@@ -11,7 +11,6 @@ use Tnt\Ecommerce\Events\Order\Paid;
 use Tnt\Ecommerce\Events\Order\PaymentCanceled;
 use Tnt\Ecommerce\Events\Order\PaymentExpired;
 use Tnt\Ecommerce\Events\Order\PaymentFailed;
-use Tnt\Ecommerce\Events\Order\PaymentRefunded;
 use Tnt\Ecommerce\Model\Order;
 
 class WebhookController
