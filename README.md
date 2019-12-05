@@ -1,10 +1,11 @@
-### Mollie payments
+# Mollie Payment
 
-#### MolliePayment
-
-##### Mollie config options (mollie.php)
+### Config options (mollie.php)
 
 Name | Default
 ---- | -------
 api_key | 
 redirect_url | 
+
+### More info on payments
+https://github.com/reinvanoyen/dry-ecommerce/blob/master/docs/payment.md
