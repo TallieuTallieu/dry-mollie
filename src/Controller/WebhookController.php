@@ -38,7 +38,7 @@ class WebhookController
                 // Payment is expired
                 Dispatcher::dispatch(PaymentExpired::class, new PaymentExpired($order));
 
-            } elseif ($payment->isCancelled()) {
+            } elseif ($payment->isCanceled()) {
 
                 // Payment was canceled by user
                 Dispatcher::dispatch(PaymentCanceled::class, new PaymentCanceled($order));
