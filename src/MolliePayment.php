@@ -3,12 +3,14 @@
 namespace Tnt\Mollie;
 
 use dry\http\Response;
+use Mollie\Api\Exceptions\ApiException;
 use Mollie\Api\MollieApiClient;
 use Oak\Contracts\Config\RepositoryInterface;
 use Oak\Contracts\Dispatcher\DispatcherInterface;
 use Tnt\Ecommerce\Contracts\OrderInterface;
 use Tnt\Ecommerce\Contracts\PaymentInterface;
 use Tnt\Ecommerce\Events\Order\Paid;
+use Tnt\Ecommerce\Events\Order\PaymentFailed;
 
 class MolliePayment implements PaymentInterface
 {
@@ -49,23 +51,31 @@ class MolliePayment implements PaymentInterface
             // Format total price as a string (needed for Mollie)
             $total = number_format($order->getTotal(), 2, '.', '');
 
-            // Create the Mollie payment
-            $payment = $this->mollie->payments->create([
-                'amount' => [
-                    'currency' => 'EUR',
-                    'value' => $total,
-                ],
-                'description' => 'My first API payment',
-                'redirectUrl' => $this->config->get('mollie.redirect_url'),
-                'webhookUrl'  => \dry\abs_url('mollie-webhook/'),
-            ]);
+            try {
 
-            // Store the Mollie payment id in the order
-            $order->payment_id = $payment->id;
-            $order->save();
+                // Create the Mollie payment
+                $payment = $this->mollie->payments->create([
+                    'amount' => [
+                        'currency' => 'EUR',
+                        'value' => $total,
+                    ],
+                    'description' => $order->order_id,
+                    'redirectUrl' => $this->config->get('mollie.redirect_url'),
+                    'webhookUrl'  => \dry\abs_url('mollie-webhook/'),
+                ]);
 
-            // Redirect to Mollie
-            Response::redirect($payment->getCheckoutUrl());
+                // Store the Mollie payment id in the order
+                $order->payment_id = $payment->id;
+                $order->save();
+
+                // Redirect to Mollie
+                Response::redirect($payment->getCheckoutUrl());
+
+            } catch (ApiException $e) {
+
+                // Payment failed
+                $this->dispatcher->dispatch(PaymentFailed::class, new PaymentFailed($order));
+            }
 
         } else {
 
