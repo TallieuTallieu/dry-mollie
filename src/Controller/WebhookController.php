@@ -3,7 +3,6 @@
 namespace Tnt\Mollie\Controller;
 
 use dry\db\FetchException;
-use dry\Debug;
 use dry\http\Request;
 use dry\route\NotFound;
 use Mollie\Api\MollieApiClient;
@@ -32,7 +31,7 @@ class WebhookController
 
             if ($payment->hasRefunds()) {
                 // Payment refunded
-                Dispatcher::dispatch(PaymentRefunded::class, new PaymentRefunded($order));
+                Dispatcher::dispatch(PaymentRefunded::class, new PaymentRefunded($order, $payment->refunds()));
                 return;
             }
 
