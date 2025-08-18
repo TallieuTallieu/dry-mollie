@@ -60,7 +60,8 @@ class MolliePayment implements PaymentInterface
                         'value' => $total,
                     ],
                     'description' => $order->order_id,
-                    'redirectUrl' => $this->config->get('mollie.redirect_url'),
+                    'redirectUrl' => $this->config->get('mollie.redirect_url') . '?cancel=false&order='.$order->id,
+                    'cancelUrl' => $this->config->get('mollie.redirect_url') . '?cancel=true&order='.$order->id,
                     'webhookUrl'  => \dry\abs_url('mollie-webhook/'),
                 ]);
 
