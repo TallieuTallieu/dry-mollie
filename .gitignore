@@ -1,4 +1,8 @@
 .idea
-.DS_store
-/vendor
-composer.lock
+.DS_Store
+.vagrant
+/vendor/
+
+.wakatime-project
+.yarn
+node_modules
