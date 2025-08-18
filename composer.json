@@ -1,14 +1,16 @@
 {
-  "name": "tallieutallieu/dry-mollie",
-  "minimum-stability": "dev",
-  "description": "Mollie payments",
-  "type": "library",
-  "require": {
-      "mollie/mollie-api-php": "^2.12"
-  },
-  "autoload": {
-    "psr-4": {
-      "Tnt\\Mollie\\": "src/"
+    "name": "tallieutallieu/dry-mollie",
+    "minimum-stability": "dev",
+    "description": "Mollie payments",
+    "type": "library",
+    "require": {
+        "mollie/mollie-api-php": "^3.4.0",
+        "tallieutallieu/oak": "^1.1.15",
+        "tallieutallieu/dry-ecommerce": "^1.2.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Tnt\\Mollie\\": "src/"
+        }
     }
-  }
 }
