@@ -1,0 +1,14 @@
+networks:
+  dev:
+    external: true
+
+services:
+  dry-mollie-dev:
+    build: https://github.com/TallieuTallieu/dry-docker.git
+    hostname: docker_app
+    volumes:
+      - .:/var/www/html
+      - ~/.ssh:/root/.ssh:ro
+    ports:
+      - "80"
+    command: ["sh", "-c", "eval `ssh-agent -s` && ssh-add && composer install && apache2ctl -D FOREGROUND"]
