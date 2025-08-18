@@ -1,0 +1,10 @@
+{
+  "name": "oak",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@prettier/plugin-php": "^0.22.4",
+    "prettier": "^3.5.3"
+  },
+  "packageManager": "yarn@4.9.2"
+}
