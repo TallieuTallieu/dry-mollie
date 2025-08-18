@@ -2,15 +2,22 @@
 
 namespace Tnt\Mollie;
 
-use dry\http\Response;
 use Mollie\Api\Exceptions\ApiException;
 use Mollie\Api\MollieApiClient;
 use Oak\Contracts\Config\RepositoryInterface;
 use Oak\Contracts\Dispatcher\DispatcherInterface;
+use Oak\Dispatcher\Facade\Dispatcher;
 use Tnt\Ecommerce\Contracts\OrderInterface;
 use Tnt\Ecommerce\Contracts\PaymentInterface;
 use Tnt\Ecommerce\Events\Order\Paid;
+use Tnt\Ecommerce\Events\Order\PaymentCanceled;
+use Tnt\Ecommerce\Events\Order\PaymentExpired;
 use Tnt\Ecommerce\Events\Order\PaymentFailed;
+use Tnt\Ecommerce\Events\Order\PaymentRefunded;
+use Tnt\Ecommerce\Model\Order;
+use dry\db\FetchException;
+use dry\http\Response;
+use dry\route\NotFound;
 
 class MolliePayment implements PaymentInterface
 {
@@ -35,8 +42,11 @@ class MolliePayment implements PaymentInterface
      * @param MollieApiClient $mollie
      * @param DispatcherInterface $dispatcher
      */
-    public function __construct(RepositoryInterface $config, MollieApiClient $mollie, DispatcherInterface $dispatcher)
-    {
+    public function __construct(
+        RepositoryInterface $config,
+        MollieApiClient $mollie,
+        DispatcherInterface $dispatcher
+    ) {
         $this->config = $config;
         $this->mollie = $mollie;
         $this->dispatcher = $dispatcher;
@@ -47,12 +57,10 @@ class MolliePayment implements PaymentInterface
         $total = $order->getTotal();
 
         if ($total > 0) {
-
             // Format total price as a string (needed for Mollie)
             $total = number_format($order->getTotal(), 2, '.', '');
 
             try {
-
                 // Create the Mollie payment
                 $payment = $this->mollie->payments->create([
                     'amount' => [
@@ -60,9 +68,15 @@ class MolliePayment implements PaymentInterface
                         'value' => $total,
                     ],
                     'description' => $order->order_id,
-                    'redirectUrl' => $this->config->get('mollie.redirect_url') . '?cancel=false&order='.$order->id,
-                    'cancelUrl' => $this->config->get('mollie.redirect_url') . '?cancel=true&order='.$order->id,
-                    'webhookUrl'  => \dry\abs_url('mollie-webhook/'),
+                    'redirectUrl' =>
+                        $this->config->get('mollie.redirect_url') .
+                        '?cancel=false&order=' .
+                        $order->id,
+                    'cancelUrl' =>
+                        $this->config->get('mollie.redirect_url') .
+                        '?cancel=true&order=' .
+                        $order->id,
+                    'webhookUrl' => \dry\abs_url('mollie-webhook/'),
                 ]);
 
                 // Store the Mollie payment id in the order
@@ -71,20 +85,69 @@ class MolliePayment implements PaymentInterface
 
                 // Redirect to Mollie
                 Response::redirect($payment->getCheckoutUrl());
-
             } catch (ApiException $e) {
-
                 // Payment failed
-                $this->dispatcher->dispatch(PaymentFailed::class, new PaymentFailed($order));
+                $this->dispatcher->dispatch(
+                    PaymentFailed::class,
+                    new PaymentFailed($order)
+                );
             }
-
         } else {
-
             // Payment complete
             $this->dispatcher->dispatch(Paid::class, new Paid($order));
 
             // Redirect to the page!
             Response::redirect($this->config->get('mollie.redirect_url'));
+        }
+    }
+
+    public static function process(MollieApiClient $mollieApiClient, $paymentId)
+    {
+        $payment = $mollieApiClient->payments->get($paymentId);
+        $orderPaymentId = $payment->id;
+
+        try {
+            $order = Order::load_by('payment_id', $orderPaymentId);
+        } catch (FetchException $e) {
+            throw new NotFound();
+        }
+
+        if ($payment->isPaid()) {
+            if ($payment->hasRefunds()) {
+                // Payment refunded
+                Dispatcher::dispatch(
+                    PaymentRefunded::class,
+                    new PaymentRefunded($order, $payment->refunds())
+                );
+                return;
+            }
+
+            // Payment complete
+            Dispatcher::dispatch(Paid::class, new Paid($order));
+        } elseif ($payment->isExpired()) {
+            // Payment is expired
+            Dispatcher::dispatch(
+                PaymentExpired::class,
+                new PaymentExpired($order)
+            );
+        } elseif ($payment->isCanceled()) {
+            // Payment was canceled by user
+            Dispatcher::dispatch(
+                PaymentCanceled::class,
+                new PaymentCanceled($order)
+            );
+        } elseif ($payment->isFailed()) {
+            // Payment is failed
+            Dispatcher::dispatch(
+                PaymentFailed::class,
+                new PaymentFailed($order)
+            );
+        } else {
+            // Generic payment failed this should never happen
+            Dispatcher::dispatch(
+                PaymentFailed::class,
+                new PaymentFailed($order)
+            );
         }
     }
 }
