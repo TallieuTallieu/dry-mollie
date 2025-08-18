@@ -141,8 +141,10 @@ class MolliePayment implements PaymentInterface
      * @throws FetchException When database query fails
      * @throws ApiException When Mollie API communication fails
      */
-    public static function process(MollieApiClient $mollieApiClient, string $paymentId): void
-    {
+    public static function process(
+        MollieApiClient $mollieApiClient,
+        string $paymentId
+    ): void {
         $molliePayment = $mollieApiClient->payments->get($paymentId);
         $paymentId = $molliePayment->id;
 
@@ -152,7 +154,9 @@ class MolliePayment implements PaymentInterface
             throw new NotFound();
         }
 
-        if ($molliePayment->isPaid()) {
+        if ($molliePayment->isOpen()) {
+            return;
+        } elseif ($molliePayment->isPaid()) {
             if ($molliePayment->hasRefunds()) {
                 // Payment refunded
                 Dispatcher::dispatch(
