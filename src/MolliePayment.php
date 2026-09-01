@@ -4,42 +4,39 @@ declare(strict_types=1);
 
 namespace Tnt\Mollie;
 
-use dry\http\Response;
-use dry\route\NotFound;
-use dry\util\Helpers;
 use Mollie\Api\Exceptions\ApiException;
 use Mollie\Api\MollieApiClient;
 use Oak\Contracts\Config\RepositoryInterface;
 use Oak\Contracts\Dispatcher\DispatcherInterface;
-use Oak\Dispatcher\Facade\Dispatcher;
 use Tnt\Ecommerce\Contracts\OrderInterface;
-use Tnt\Ecommerce\Contracts\PaymentInterface;
+use Tnt\Ecommerce\Contracts\PaymentGatewayInterface;
+use Tnt\Ecommerce\Contracts\RedirectorInterface;
 use Tnt\Ecommerce\Events\Order\Paid;
-use Tnt\Ecommerce\Events\Order\PaymentCanceled;
-use Tnt\Ecommerce\Events\Order\PaymentExpired;
 use Tnt\Ecommerce\Events\Order\PaymentFailed;
-use Tnt\Ecommerce\Events\Order\PaymentRefunded;
 use Tnt\Ecommerce\Model\Order;
 use Tnt\Ecommerce\Money;
-use Tnt\Ecommerce\Repository\OrderRepository;
+use Tnt\Ecommerce\Payment\PaymentStatus;
 
 /**
- * The 1.x gateway, ported just far enough to compile against dry-ecommerce
- * 4.x. Dispatches events and never writes `payment_status` — the package's
- * listeners own that column. The reimplementation on the payment harness
- * (PaymentGatewayInterface + PaymentWebhook) is the follow-up ticket.
+ * The Mollie gateway on dry-ecommerce's payment harness: pay() creates the
+ * Mollie payment and redirects to its checkout, statusOf() asks Mollie's
+ * API where the money stands. Dispatches events and never writes
+ * `payment_status` — the package's listeners own that column. See
+ * docs/gateway.md.
  */
-class MolliePayment implements PaymentInterface
+class MolliePayment implements PaymentGatewayInterface
 {
     /**
      * @param RepositoryInterface $config
      * @param MollieApiClient $mollie
      * @param DispatcherInterface $dispatcher
+     * @param RedirectorInterface $redirector
      */
     public function __construct(
         private RepositoryInterface $config,
         private MollieApiClient $mollie,
-        private DispatcherInterface $dispatcher
+        private DispatcherInterface $dispatcher,
+        private RedirectorInterface $redirector
     ) {}
 
     /**
@@ -57,12 +54,10 @@ class MolliePayment implements PaymentInterface
             return;
         }
 
-        $redirectUrl = $this->configuredRedirectUrl();
-
         if ($order->getTotal() <= 0) {
             $this->dispatcher->dispatch(Paid::class, new Paid($order));
 
-            Response::redirect($redirectUrl, 302);
+            $this->redirector->redirect($this->returnUrl($order));
 
             return;
         }
@@ -76,106 +71,100 @@ class MolliePayment implements PaymentInterface
                     'value' => Money::toDecimal($order->getTotal()),
                 ],
                 'description' => (string) $order->order_id,
-                'redirectUrl' =>
-                    $redirectUrl . '?cancel=false&order=' . (int) $order->id,
-                'cancelUrl' =>
-                    $redirectUrl . '?cancel=true&order=' . (int) $order->id,
-                'webhookUrl' => Helpers::abs_url('mollie-webhook/'),
+                'redirectUrl' => $this->returnUrl($order),
+                'webhookUrl' => $this->configuredUrl('mollie.webhook_url'),
             ]);
-
-            // The webhook's lookup key. Overwritten on a re-placed order:
-            // the old payment is dead at Mollie.
-            $order->payment_id = $molliePayment->id;
-            $order->save();
-
-            $checkoutUrl = $molliePayment->getCheckoutUrl();
-
-            if ($checkoutUrl !== null) {
-                Response::redirect($checkoutUrl, 302);
-            }
         } catch (ApiException) {
+            // The attempt never left the shop. Failed keeps the order
+            // re-placeable, so the visitor can try again from the basket
+            // that is still standing.
             $this->dispatcher->dispatch(
                 PaymentFailed::class,
                 new PaymentFailed($order)
             );
+
+            return;
+        }
+
+        // The webhook's lookup key. Overwritten on a re-placed order: the
+        // old payment is dead at Mollie and this attempt is the live one.
+        $order->payment_id = $molliePayment->id;
+        $order->save();
+
+        $checkoutUrl = $molliePayment->getCheckoutUrl();
+
+        if ($checkoutUrl !== null) {
+            $this->redirector->redirect($checkoutUrl);
         }
     }
 
     /**
-     * Process a Mollie webhook: fetch the payment, find its order, dispatch
-     * the event its status maps to. An open payment reports nothing yet.
+     * Where the money for a Mollie payment stands, per Mollie's API — never
+     * per the webhook body, which carries only the id.
      *
-     * @param MollieApiClient $mollieApiClient
      * @param string $paymentId
-     * @return void
+     * @return PaymentStatus
      *
-     * @throws NotFound When no order carries the payment id.
-     * @throws ApiException When the Mollie API cannot be reached.
+     * @throws ApiException When Mollie cannot be reached or does not know
+     *                      the payment.
      */
-    public static function process(
-        MollieApiClient $mollieApiClient,
-        string $paymentId
-    ): void {
-        $molliePayment = $mollieApiClient->payments->get($paymentId);
+    public function statusOf(string $paymentId): PaymentStatus
+    {
+        $payment = $this->mollie->payments->get($paymentId);
 
-        $order = OrderRepository::create()
-            ->byPaymentId($molliePayment->id)
-            ->firstOrNull();
-
-        if ($order === null) {
-            throw new NotFound();
+        if ($payment->isPaid()) {
+            // Mollie keeps a refunded or charged-back payment on paid; the
+            // money that went back hangs off it as refunds/chargebacks.
+            return $payment->hasRefunds() || $payment->hasChargebacks()
+                ? PaymentStatus::Refunded
+                : PaymentStatus::Paid;
         }
 
-        if ($molliePayment->isOpen()) {
-            return;
+        if ($payment->isFailed()) {
+            return PaymentStatus::Failed;
         }
 
-        if ($molliePayment->isPaid()) {
-            if ($molliePayment->hasRefunds()) {
-                Dispatcher::dispatch(
-                    PaymentRefunded::class,
-                    new PaymentRefunded($order)
-                );
-
-                return;
-            }
-
-            Dispatcher::dispatch(Paid::class, new Paid($order));
-
-            return;
+        if ($payment->isCanceled()) {
+            return PaymentStatus::Canceled;
         }
 
-        if ($molliePayment->isExpired()) {
-            Dispatcher::dispatch(
-                PaymentExpired::class,
-                new PaymentExpired($order)
-            );
-
-            return;
+        if ($payment->isExpired()) {
+            return PaymentStatus::Expired;
         }
 
-        if ($molliePayment->isCanceled()) {
-            Dispatcher::dispatch(
-                PaymentCanceled::class,
-                new PaymentCanceled($order)
-            );
-
-            return;
-        }
-
-        // Failed, or a status this port does not know — either way the
-        // attempt did not succeed.
-        Dispatcher::dispatch(PaymentFailed::class, new PaymentFailed($order));
+        // open, pending — and authorized, where the money is only reserved
+        // and a capture can still fail or be voided: nothing is reported
+        // until Mollie says paid. Pending dispatches no event.
+        return PaymentStatus::Pending;
     }
 
     /**
-     * The configured `mollie.redirect_url`, or '' when unset.
+     * The configured return page with the order appended as `order=`, so
+     * the page can find the order whose state it renders. Identification,
+     * not authentication — the page still decides who may see what.
      *
+     * @param Order $order
      * @return string
      */
-    private function configuredRedirectUrl(): string
+    private function returnUrl(Order $order): string
     {
-        $configured = $this->config->get('mollie.redirect_url');
+        $url = $this->configuredUrl('mollie.redirect_url');
+
+        return $url .
+            (str_contains($url, '?') ? '&' : '?') .
+            'order=' .
+            (int) $order->id;
+    }
+
+    /**
+     * A URL from configuration, or '' when unset.
+     *
+     * @param string $key
+     * @return string
+     */
+    private function configuredUrl(string $key): string
+    {
+        $configured = $this->config->get($key);
 
         return is_string($configured) ? $configured : '';
     }

@@ -1,23 +1,25 @@
 # dry-mollie
 
-Mollie payment gateway for [dry-ecommerce](https://github.com/TallieuTallieu/dry-ecommerce).
-
-> [!warning] Being reimplemented
-> The package was just modernized to the dry 4 line (PHP 8.4, oak 3,
-> dry-ecommerce 4.x) with the 1.x behaviour ported as-is. The gateway is
-> being reimplemented on dry-ecommerce's payment harness — the
-> `PaymentGatewayInterface` / `PaymentWebhook` shape described in that
-> package's docs/payment.md "Writing a gateway" guide. Until that lands,
-> treat the current gateway class as transitional.
+Mollie payment gateway for [dry-ecommerce](https://github.com/TallieuTallieu/dry-ecommerce)
+— the first gateway on that package's payment harness, and the shape a new
+provider package copies.
 
 ## Pages
 
 - [Installation](installation.md) — requirements and the dev-only path-repo
   arrangement
+- [The gateway](gateway.md) — what the package does, the three things a
+  project wires (config, the webhook route, the return page), test-mode
+  notes
 
-## Configuration (mollie.php)
+## At a glance
 
-| Key            | Meaning                                        |
-| -------------- | ---------------------------------------------- |
-| `api_key`      | Mollie API key (`test_...` / `live_...`)       |
-| `redirect_url` | Where Mollie sends the visitor back afterwards |
+| Key (`mollie.php`) | Meaning                                                  |
+| ------------------ | -------------------------------------------------------- |
+| `api_key`          | Mollie API key (`test_...` / `live_...`), from the env   |
+| `redirect_url`     | The return page; the gateway appends `order=<id>`        |
+| `webhook_url`      | The project's one webhook route, as Mollie reaches it    |
+
+The gateway dispatches events and never writes `payment_status` — the
+dry-ecommerce listeners own that column, and their transition guard is what
+makes replayed and late webhooks harmless.

@@ -1,13 +1,10 @@
 # dry-mollie
 
 Mollie payment gateway for
-[dry-ecommerce](https://github.com/TallieuTallieu/dry-ecommerce).
-
-> **Status:** modernized to the dry 4 line (PHP 8.4, dry-ecommerce 4.x via
-> the dev-only path-repo arrangement) with the 1.x behaviour ported as-is.
-> The gateway is being **reimplemented on the dry-ecommerce payment
-> harness** — see the `dry-mollie` epic. Until that lands, treat the
-> gateway class as transitional.
+[dry-ecommerce](https://github.com/TallieuTallieu/dry-ecommerce) — the
+first gateway on that package's payment harness
+(`PaymentGatewayInterface` + `PaymentWebhook`), and the reference shape
+for new provider packages.
 
 ## Install
 
@@ -20,11 +17,16 @@ composer require tallieutallieu/dry-mollie
 with the GitHub VCS repository configured, and — while dry-ecommerce 4.x is
 untagged — a path repository to a sibling `../dry-ecommerce` checkout.
 
-## Configuration (`mollie.php`)
+## Wiring
 
-| Key            | Meaning                                        |
-| -------------- | ---------------------------------------------- |
-| `api_key`      | Mollie API key (`test_...` / `live_...`)       |
-| `redirect_url` | Where Mollie sends the visitor back afterwards |
+Three things, all project-side and all documented in
+[docs/gateway.md](docs/gateway.md):
 
-More on payments: dry-ecommerce's `docs/payment.md`.
+1. `config/mollie.php` — `api_key` (from the env), `redirect_url`,
+   `webhook_url`; and `'payment' => \Tnt\Mollie\MolliePayment::class` in
+   `config/ecommerce.php`.
+2. One webhook route handed to dry-ecommerce's `PaymentWebhook`.
+3. A return page that reads the order's own payment status.
+
+The gateway dispatches events and never writes `payment_status` — the
+dry-ecommerce listeners own that column.
