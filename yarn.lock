@@ -17,21 +17,21 @@ __metadata:
   languageName: node
   linkType: hard
 
+"dry-mollie@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "dry-mollie@workspace:."
+  dependencies:
+    "@prettier/plugin-php": "npm:^0.22.4"
+    prettier: "npm:^3.5.3"
+  languageName: unknown
+  linkType: soft
+
 "linguist-languages@npm:^7.27.0":
   version: 7.31.2
   resolution: "linguist-languages@npm:7.31.2"
   checksum: 10c0/ed28967c5e3088ddf4de0363de0c7cbbe03d8dbe91655edfce440b84c51aeac1c295df8807c05ae23411246d6c2f3155da2cceda8ed678e8476d0e0d16d5cb15
   languageName: node
   linkType: hard
-
-"oak@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "oak@workspace:."
-  dependencies:
-    "@prettier/plugin-php": "npm:^0.22.4"
-    prettier: "npm:^3.5.3"
-  languageName: unknown
-  linkType: soft
 
 "php-parser@npm:^3.1.5":
   version: 3.2.5

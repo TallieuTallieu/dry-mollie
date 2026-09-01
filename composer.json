@@ -1,17 +1,55 @@
 {
-    "name": "tallieutallieu/dry-mollie",
-    "minimum-stability": "dev",
-    "description": "Mollie payments",
-    "type": "library",
-    "require": {
-        "php": "^7.4|^8.0",
-        "mollie/mollie-api-php": "^3.4.0",
-        "tallieutallieu/oak": "^1.1.15",
-        "tallieutallieu/dry-ecommerce": "^1.2.1"
-    },
-    "autoload": {
-        "psr-4": {
-            "Tnt\\Mollie\\": "src/"
-        }
+  "name": "tallieutallieu/dry-mollie",
+  "description": "Mollie payment gateway for dry-ecommerce",
+  "type": "library",
+  "license": "proprietary",
+  "minimum-stability": "beta",
+  "require": {
+    "php": ">=8.4",
+    "mollie/mollie-api-php": "^3.13",
+    "tallieutallieu/dry-ecommerce": "^4.0@dev"
+  },
+  "require-dev": {
+    "pestphp/pest": "^3.8",
+    "phpstan/phpstan": "^2.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "Tnt\\Mollie\\": "src/"
     }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Tests\\": "tests/"
+    }
+  },
+  "config": {
+    "allow-plugins": {
+      "pestphp/pest-plugin": true
+    }
+  },
+  "scripts": {
+    "phpstan": "phpstan analyse --memory-limit=512M"
+  },
+  "repositories": [
+    {
+      "type": "path",
+      "url": "../dry-ecommerce",
+      "options": {
+        "symlink": true,
+        "versions": {
+          "tallieutallieu/dry-ecommerce": "4.0.x-dev"
+        }
+      }
+    },
+    {
+      "type": "vcs",
+      "url": "git@github.com:TallieuTallieu/dry-ecommerce.git",
+      "no-api": true
+    },
+    {
+      "type": "vcs",
+      "url": "git@bitbucket.org:tallieu/dry3.git"
+    }
+  ]
 }

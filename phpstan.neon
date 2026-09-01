@@ -1,0 +1,31 @@
+parameters:
+    level: 9
+    paths:
+        - src
+        - tests
+
+    # Strict rules for maximum type safety
+    checkMissingCallableSignature: true
+    checkUninitializedProperties: true
+    checkTooWideReturnTypesInProtectedAndPublicMethods: true
+    checkBenevolentUnionTypes: true
+
+    # Additional strict checks
+    reportMaybesInMethodSignatures: true
+    reportStaticMethodSignatures: true
+    reportMaybesInPropertyPhpDocTypes: true
+
+    # Bleeding edge features for strictest analysis
+    treatPhpDocTypesAsCertain: false
+
+    # Ignore vendor and generated files
+    excludePaths:
+        - vendor
+
+    # Custom error format for better readability
+    editorUrl: 'phpstorm://open?file=%%file%%&line=%%line%%'
+
+    # Parallel processing for faster analysis
+    parallel:
+        maximumNumberOfProcesses: 4
+        processTimeout: 300.0
