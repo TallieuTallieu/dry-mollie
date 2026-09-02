@@ -1,0 +1,233 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'README.md'
+      - 'AGENTS.md'
+      - '.gitignore'
+      - '.github/**'
+
+env:
+  BITBUCKET_SSH_KEY: ${{ secrets.BITBUCKET_SSH_KEY }}
+
+concurrency:
+  group: auto-release-${{ github.ref }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  auto-release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        working-directory: dry-mollie
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          path: dry-mollie
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout dry-ecommerce (path repository)
+        uses: actions/checkout@v5
+        with:
+          repository: TallieuTallieu/dry-ecommerce
+          path: dry-ecommerce
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: imagick
+          tools: composer
+
+      - name: Setup Bitbucket SSH key
+        if: env.BITBUCKET_SSH_KEY != ''
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          eval "$(ssh-agent -s)"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          ssh-add - <<< "$BITBUCKET_SSH_KEY"
+          ssh-keyscan bitbucket.org >> ~/.ssh/known_hosts
+
+      - name: Install dependencies
+        run: composer install --no-dev --optimize-autoloader
+
+      - name: Run verification checks
+        run: composer validate --strict
+
+      - name: Determine version bump type
+        id: version-type
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+
+          BRANCH_NAME=""
+          if [[ "$COMMIT_MSG" == *"Merge pull request"* ]]; then
+            BRANCH_NAME=$(echo "$COMMIT_MSG" | grep -o 'from [^/]*/[^[:space:]]*' | cut -d'/' -f2)
+          fi
+
+          VERSION_TYPE="patch"
+
+          if [[ "$COMMIT_MSG" == *"BREAKING CHANGE"* ]] || [[ "$COMMIT_MSG" == *"feat!"* ]]; then
+            VERSION_TYPE="major"
+          elif [[ "$BRANCH_NAME" == *"major"* ]] || [[ "$BRANCH_NAME" == *"breaking"* ]]; then
+            VERSION_TYPE="major"
+          elif [[ "$BRANCH_NAME" == *"feat"* ]] || [[ "$BRANCH_NAME" == *"feature"* ]] || [[ "$BRANCH_NAME" == *"minor"* ]]; then
+            VERSION_TYPE="minor"
+          elif [[ "$BRANCH_NAME" == *"fix"* ]] || [[ "$BRANCH_NAME" == *"hotfix"* ]] || [[ "$BRANCH_NAME" == *"patch"* ]]; then
+            VERSION_TYPE="patch"
+          elif [[ "$BRANCH_NAME" == *"sc-"* ]] && [[ "$BRANCH_NAME" == *"feature"* ]]; then
+            VERSION_TYPE="minor"
+          elif [[ "$COMMIT_MSG" == *"feat:"* ]] || [[ "$COMMIT_MSG" == *"feat("* ]]; then
+            VERSION_TYPE="minor"
+          elif [[ "$COMMIT_MSG" == *"fix:"* ]] || [[ "$COMMIT_MSG" == *"fix("* ]]; then
+            VERSION_TYPE="patch"
+          fi
+
+          echo "version_type=$VERSION_TYPE" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Check if version should be bumped
+        id: should-release
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if [[ "$COMMIT_MSG" == *"chore(release):"* ]] || [[ "$COMMIT_MSG" == *"bump version"* ]]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get current version and bump
+        id: version
+        if: steps.should-release.outputs.should_release == 'true'
+        run: |
+          SEMVER_TAGS=$(git tag --list | awk '
+            /^v?[0-9]+\.[0-9]+\.[0-9]+$/ {
+              version = $0
+              sub(/^v/, "", version)
+              print version "\t" $0
+            }
+          ' | sort -V)
+          LATEST_TAG=$(echo "$SEMVER_TAGS" | tail -n 1 | cut -f 2)
+          CURRENT_TAG=$(git tag --points-at HEAD | awk '
+            /^v?[0-9]+\.[0-9]+\.[0-9]+$/ {
+              version = $0
+              sub(/^v/, "", version)
+              print version "\t" $0
+            }
+          ' | sort -V | tail -n 1 | cut -f 2)
+
+          if [ -n "$CURRENT_TAG" ]; then
+            NEW_VERSION=${CURRENT_TAG#v}
+            PREVIOUS_TAG=$(echo "$SEMVER_TAGS" | awk -v current="$NEW_VERSION" '
+              $1 == current { exit }
+              { previous = $2 }
+              END { print previous }
+            ')
+            OLD_VERSION=${PREVIOUS_TAG#v}
+            OLD_VERSION=${OLD_VERSION:-0.0.0}
+            TAG_EXISTS=true
+          else
+            PREVIOUS_TAG=$LATEST_TAG
+            OLD_VERSION=${LATEST_TAG#v}
+            OLD_VERSION=${OLD_VERSION:-0.0.0}
+            TAG_EXISTS=false
+
+            if [[ ! $OLD_VERSION =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "Error: Invalid version format '$OLD_VERSION'" >&2
+              exit 1
+            fi
+
+            MAJOR=${BASH_REMATCH[1]}
+            MINOR=${BASH_REMATCH[2]}
+            PATCH=${BASH_REMATCH[3]}
+
+            case ${{ steps.version-type.outputs.version_type }} in
+              "major") MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              "minor") MINOR=$((MINOR + 1)); PATCH=0 ;;
+              "patch") PATCH=$((PATCH + 1)) ;;
+            esac
+
+            NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          fi
+
+          echo "old_version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.should-release.outputs.should_release == 'true' && steps.version.outputs.tag_exists != 'true'
+        run: |
+          git tag "${{ steps.version.outputs.new_version }}"
+          git push origin "refs/tags/${{ steps.version.outputs.new_version }}"
+
+      - name: Generate changelog
+        if: steps.should-release.outputs.should_release == 'true'
+        id: changelog
+        run: |
+          PREVIOUS_TAG="${{ steps.version.outputs.previous_tag }}"
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "### Changes since $PREVIOUS_TAG" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" "$PREVIOUS_TAG"..HEAD >> CHANGELOG.md
+          else
+            echo "### Initial Release" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "This is the first tagged release of dry-mollie." >> CHANGELOG.md
+          fi
+
+          CHANGELOG_CONTENT=$(cat CHANGELOG.md)
+          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGELOG_CONTENT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: steps.should-release.outputs.should_release == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.new_version }}
+          name: Release ${{ steps.version.outputs.new_version }}
+          body: |
+            ## Release ${{ steps.version.outputs.new_version }}
+
+            **Version bump**: ${{ steps.version.outputs.old_version }} -> ${{ steps.version.outputs.new_version }} (${{ steps.version-type.outputs.version_type }})
+
+            ${{ steps.changelog.outputs.changelog }}
+
+            ### Installation
+
+            ```bash
+            composer require tallieutallieu/dry-mollie:^${{ steps.version.outputs.new_version }}
+            ```
+
+            ### Usage
+
+            ```php
+            $app = new \Oak\Application();
+
+            $app->register([
+                \Tnt\Ecommerce\EcommerceServiceProvider::class,
+                \Tnt\Mollie\MollieServiceProvider::class,
+            ]);
+
+            $app->bootstrap();
+            ```
+          draft: false
+          prerelease: false
