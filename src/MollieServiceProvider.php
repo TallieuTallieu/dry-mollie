@@ -4,18 +4,14 @@ declare(strict_types=1);
 
 namespace Tnt\Mollie;
 
-use dry\http\Request;
-use dry\route\Router;
 use Mollie\Api\MollieApiClient;
 use Oak\Contracts\Config\RepositoryInterface;
 use Oak\Contracts\Container\ContainerInterface;
 use Oak\ServiceProvider;
-use Tnt\Mollie\Controller\WebhookController;
 
 /**
- * Registers the Mollie API client and the 1.x webhook route. The route
- * moves to the project (dry routes are project-registered) when the
- * gateway is reimplemented on the payment harness.
+ * Registers the Mollie API client. The webhook route is the project's to
+ * wire — one route to dry-ecommerce's PaymentWebhook; see docs/gateway.md.
  */
 class MollieServiceProvider extends ServiceProvider
 {
@@ -25,14 +21,7 @@ class MollieServiceProvider extends ServiceProvider
      */
     public function boot(ContainerInterface $app): void
     {
-        Router::register('nl', null, [
-            'mollie-webhook/' => function (Request $request) use ($app): void {
-                /** @var MollieApiClient $client */
-                $client = $app->get(MollieApiClient::class);
-
-                WebhookController::process($request, $client);
-            },
-        ]);
+        //
     }
 
     /**
