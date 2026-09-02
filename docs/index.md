@@ -6,8 +6,7 @@ provider package copies.
 
 ## Pages
 
-- [Installation](installation.md) — requirements and the dev-only path-repo
-  arrangement
+- [Installation](installation.md) — requirements and the VCS repositories
 - [The gateway](gateway.md) — what the package does, the three things a
   project wires (config, the webhook route, the return page), test-mode
   notes

@@ -136,6 +136,6 @@ references.
 
 ## See also
 
-- [Installation](installation.md) — the package next to dry-ecommerce 4.x
+- [Installation](installation.md) — requirements and the VCS repositories
 - dry-ecommerce `docs/payment.md` — the harness, the events, the guard
 - dry-ecommerce `docs/orders.md` — re-placement, the return page's rules
