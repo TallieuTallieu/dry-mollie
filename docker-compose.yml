@@ -4,11 +4,18 @@ networks:
 
 services:
   dry-mollie-dev:
-    build: https://github.com/TallieuTallieu/dry-docker.git
+    build: https://github.com/TallieuTallieu/dry-docker.git#php8.4
     hostname: docker_app
     volumes:
       - .:/var/www/html
       - ~/.ssh:/root/.ssh:ro
     ports:
-      - "80"
-    command: ["sh", "-c", "eval `ssh-agent -s` && ssh-add && composer install && apache2ctl -D FOREGROUND"]
+      - '80'
+    networks:
+      - dev
+    command:
+      [
+        'sh',
+        '-c',
+        'eval `ssh-agent -s` && ssh-add && composer install && apache2ctl -D FOREGROUND',
+      ]

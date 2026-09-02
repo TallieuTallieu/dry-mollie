@@ -1,8 +1,11 @@
 .idea
 .DS_Store
-.vagrant
+.wakatime-project
 /vendor/
 
-.wakatime-project
-.yarn
 node_modules
+.yarn
+.env
+
+# Agent tooling scratch dirs
+.claude/.cc-writes

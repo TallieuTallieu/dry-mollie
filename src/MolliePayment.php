@@ -1,7 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Tnt\Mollie;
 
+use dry\http\Response;
+use dry\route\NotFound;
+use dry\util\Helpers;
 use Mollie\Api\Exceptions\ApiException;
 use Mollie\Api\MollieApiClient;
 use Oak\Contracts\Config\RepositoryInterface;
@@ -15,183 +20,163 @@ use Tnt\Ecommerce\Events\Order\PaymentExpired;
 use Tnt\Ecommerce\Events\Order\PaymentFailed;
 use Tnt\Ecommerce\Events\Order\PaymentRefunded;
 use Tnt\Ecommerce\Model\Order;
-use dry\db\FetchException;
-use dry\http\Response;
-use dry\route\NotFound;
+use Tnt\Ecommerce\Money;
+use Tnt\Ecommerce\Repository\OrderRepository;
 
 /**
- * Mollie payment implementation for processing payments via the Mollie API.
- *
- * This class handles payment creation, redirection to Mollie's checkout,
- * and webhook processing for payment status updates. It integrates with
- * the ecommerce system to dispatch appropriate events based on payment states.
+ * The 1.x gateway, ported just far enough to compile against dry-ecommerce
+ * 4.x. Dispatches events and never writes `payment_status` — the package's
+ * listeners own that column. The reimplementation on the payment harness
+ * (PaymentGatewayInterface + PaymentWebhook) is the follow-up ticket.
  */
 class MolliePayment implements PaymentInterface
 {
     /**
-     * Configuration repository for accessing Mollie settings.
-     *
-     * @var RepositoryInterface
-     */
-    private $config;
-
-    /**
-     * Mollie API client for communicating with the Mollie API.
-     *
-     * @var MollieApiClient
-     */
-    private $mollie;
-
-    /**
-     * Event dispatcher for triggering payment-related events.
-     *
-     * @var DispatcherInterface
-     */
-    private $dispatcher;
-
-    /**
-     * Initialize the Mollie payment service with required dependencies.
-     *
-     * @param RepositoryInterface $config Configuration repository for Mollie settings
-     * @param MollieApiClient $mollie Configured Mollie API client
-     * @param DispatcherInterface $dispatcher Event dispatcher for payment events
+     * @param RepositoryInterface $config
+     * @param MollieApiClient $mollie
+     * @param DispatcherInterface $dispatcher
      */
     public function __construct(
-        RepositoryInterface $config,
-        MollieApiClient $mollie,
-        DispatcherInterface $dispatcher
-    ) {
-        $this->config = $config;
-        $this->mollie = $mollie;
-        $this->dispatcher = $dispatcher;
-    }
+        private RepositoryInterface $config,
+        private MollieApiClient $mollie,
+        private DispatcherInterface $dispatcher
+    ) {}
 
     /**
-     * Initiate payment for an order using Mollie.
+     * Create the Mollie payment for an order and redirect to its checkout.
+     * A zero total is paid on the spot, like NullPayment.
      *
-     * Creates a Mollie payment for the given order and redirects the user
-     * to Mollie's checkout page. If the order total is zero, the payment
-     * is marked as complete immediately. Handles payment failures by
-     * dispatching appropriate events.
-     *
-     * @param OrderInterface $order The order to process payment for
+     * @param OrderInterface $order
      * @return void
-     * @throws ApiException When Mollie API communication fails
      */
     public function pay(OrderInterface $order): void
     {
-        $orderTotal = $order->getTotal();
+        // Like the package's own listeners: an order that is not the
+        // package's model is left alone.
+        if (!$order instanceof Order) {
+            return;
+        }
 
-        if ($orderTotal > 0) {
-            // Format total price as a string (needed for Mollie)
-            $formattedAmount = number_format($order->getTotal(), 2, '.', '');
+        $redirectUrl = $this->configuredRedirectUrl();
 
-            try {
-                // Create the Mollie payment
-                $molliePayment = $this->mollie->payments->create([
-                    'amount' => [
-                        'currency' => 'EUR',
-                        'value' => $formattedAmount,
-                    ],
-                    'description' => $order->order_id,
-                    'redirectUrl' =>
-                        $this->config->get('mollie.redirect_url') .
-                        '?cancel=false&order=' .
-                        $order->id,
-                    'cancelUrl' =>
-                        $this->config->get('mollie.redirect_url') .
-                        '?cancel=true&order=' .
-                        $order->id,
-                    'webhookUrl' => \dry\abs_url('mollie-webhook/'),
-                ]);
-
-                // Store the Mollie payment id in the order
-                $order->payment_id = $molliePayment->id;
-                $order->save();
-
-                // Redirect to Mollie
-                Response::redirect($molliePayment->getCheckoutUrl());
-            } catch (ApiException $e) {
-                // Payment failed
-                $this->dispatcher->dispatch(
-                    PaymentFailed::class,
-                    new PaymentFailed($order)
-                );
-            }
-        } else {
-            // Payment complete
+        if ($order->getTotal() <= 0) {
             $this->dispatcher->dispatch(Paid::class, new Paid($order));
 
-            // Redirect to the page!
-            Response::redirect($this->config->get('mollie.redirect_url'));
+            Response::redirect($redirectUrl, 302);
+
+            return;
+        }
+
+        try {
+            $molliePayment = $this->mollie->payments->create([
+                'amount' => [
+                    'currency' => 'EUR',
+                    // The order's money is integer cents; Mollie wants
+                    // '12.50' strings.
+                    'value' => Money::toDecimal($order->getTotal()),
+                ],
+                'description' => (string) $order->order_id,
+                'redirectUrl' =>
+                    $redirectUrl . '?cancel=false&order=' . (int) $order->id,
+                'cancelUrl' =>
+                    $redirectUrl . '?cancel=true&order=' . (int) $order->id,
+                'webhookUrl' => Helpers::abs_url('mollie-webhook/'),
+            ]);
+
+            // The webhook's lookup key. Overwritten on a re-placed order:
+            // the old payment is dead at Mollie.
+            $order->payment_id = $molliePayment->id;
+            $order->save();
+
+            $checkoutUrl = $molliePayment->getCheckoutUrl();
+
+            if ($checkoutUrl !== null) {
+                Response::redirect($checkoutUrl, 302);
+            }
+        } catch (ApiException) {
+            $this->dispatcher->dispatch(
+                PaymentFailed::class,
+                new PaymentFailed($order)
+            );
         }
     }
 
     /**
-     * Process a Mollie payment status update from webhook.
+     * Process a Mollie webhook: fetch the payment, find its order, dispatch
+     * the event its status maps to. An open payment reports nothing yet.
      *
-     * Retrieves the payment from Mollie API, finds the associated order,
-     * and dispatches appropriate events based on the payment status.
-     * This method is called by webhook notifications to update payment states.
-     *
-     * @param MollieApiClient $mollieApiClient The Mollie API client
-     * @param string $paymentId The Mollie payment ID to process
+     * @param MollieApiClient $mollieApiClient
+     * @param string $paymentId
      * @return void
-     * @throws NotFound When no order is found for the payment ID
-     * @throws FetchException When database query fails
-     * @throws ApiException When Mollie API communication fails
+     *
+     * @throws NotFound When no order carries the payment id.
+     * @throws ApiException When the Mollie API cannot be reached.
      */
     public static function process(
         MollieApiClient $mollieApiClient,
         string $paymentId
     ): void {
         $molliePayment = $mollieApiClient->payments->get($paymentId);
-        $paymentId = $molliePayment->id;
 
-        try {
-            $order = Order::load_by('payment_id', $paymentId);
-        } catch (FetchException $e) {
+        $order = OrderRepository::create()
+            ->byPaymentId($molliePayment->id)
+            ->firstOrNull();
+
+        if ($order === null) {
             throw new NotFound();
         }
 
         if ($molliePayment->isOpen()) {
             return;
-        } elseif ($molliePayment->isPaid()) {
+        }
+
+        if ($molliePayment->isPaid()) {
             if ($molliePayment->hasRefunds()) {
-                // Payment refunded
                 Dispatcher::dispatch(
                     PaymentRefunded::class,
-                    new PaymentRefunded($order, $molliePayment->refunds())
+                    new PaymentRefunded($order)
                 );
+
                 return;
             }
 
-            // Payment complete
             Dispatcher::dispatch(Paid::class, new Paid($order));
-        } elseif ($molliePayment->isExpired()) {
-            // Payment is expired
+
+            return;
+        }
+
+        if ($molliePayment->isExpired()) {
             Dispatcher::dispatch(
                 PaymentExpired::class,
                 new PaymentExpired($order)
             );
-        } elseif ($molliePayment->isCanceled()) {
-            // Payment was canceled by user
+
+            return;
+        }
+
+        if ($molliePayment->isCanceled()) {
             Dispatcher::dispatch(
                 PaymentCanceled::class,
                 new PaymentCanceled($order)
             );
-        } elseif ($molliePayment->isFailed()) {
-            // Payment is failed
-            Dispatcher::dispatch(
-                PaymentFailed::class,
-                new PaymentFailed($order)
-            );
-        } else {
-            // Generic payment failed this should never happen
-            Dispatcher::dispatch(
-                PaymentFailed::class,
-                new PaymentFailed($order)
-            );
+
+            return;
         }
+
+        // Failed, or a status this port does not know — either way the
+        // attempt did not succeed.
+        Dispatcher::dispatch(PaymentFailed::class, new PaymentFailed($order));
+    }
+
+    /**
+     * The configured `mollie.redirect_url`, or '' when unset.
+     *
+     * @return string
+     */
+    private function configuredRedirectUrl(): string
+    {
+        $configured = $this->config->get('mollie.redirect_url');
+
+        return is_string($configured) ? $configured : '';
     }
 }

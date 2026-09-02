@@ -1,7 +1,10 @@
 {
-  "name": "oak",
+  "name": "dry-mollie",
   "type": "module",
   "private": true,
+  "scripts": {
+    "format": "prettier --write --ignore-unknown src tests"
+  },
   "devDependencies": {
     "@prettier/plugin-php": "^0.22.4",
     "prettier": "^3.5.3"

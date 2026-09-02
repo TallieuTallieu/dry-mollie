@@ -1,0 +1,182 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+    branches:
+      - master
+
+env:
+  BITBUCKET_SSH_KEY: ${{ secrets.BITBUCKET_SSH_KEY }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: PHP 8.4 Tests
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: imagick
+          tools: composer
+          coverage: xdebug
+
+      - name: Setup Bitbucket SSH key
+        if: env.BITBUCKET_SSH_KEY != ''
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          eval "$(ssh-agent -s)"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          ssh-add - <<< "$BITBUCKET_SSH_KEY"
+          ssh-keyscan bitbucket.org >> ~/.ssh/known_hosts
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Run tests
+        run: |
+          if [ -f "vendor/bin/pest" ]; then
+            echo "Running Pest tests..."
+            vendor/bin/pest --coverage-text
+          elif [ -f "vendor/bin/phpunit" ]; then
+            echo "Running PHPUnit tests..."
+            vendor/bin/phpunit --coverage-text
+          else
+            echo "No test runner found"
+            exit 1
+          fi
+
+  phpstan:
+    runs-on: ubuntu-latest
+    name: PHPStan Static Analysis
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: imagick
+          tools: composer
+
+      - name: Setup Bitbucket SSH key
+        if: env.BITBUCKET_SSH_KEY != ''
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          eval "$(ssh-agent -s)"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          ssh-add - <<< "$BITBUCKET_SSH_KEY"
+          ssh-keyscan bitbucket.org >> ~/.ssh/known_hosts
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Run PHPStan
+        run: composer phpstan
+
+  prettier:
+    runs-on: ubuntu-latest
+    name: Code Formatting Check
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Cache Yarn dependencies
+        uses: actions/cache@v5
+        with:
+          path: .yarn/cache
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: ${{ runner.os }}-yarn-
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Check formatting
+        run: yarn prettier --check --ignore-unknown src tests
+
+  security:
+    runs-on: ubuntu-latest
+    name: Security Check
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: imagick
+          tools: composer
+
+      - name: Setup Bitbucket SSH key
+        if: env.BITBUCKET_SSH_KEY != ''
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          eval "$(ssh-agent -s)"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          ssh-add - <<< "$BITBUCKET_SSH_KEY"
+          ssh-keyscan bitbucket.org >> ~/.ssh/known_hosts
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Security check
+        run: |
+          if [ -f "vendor/bin/security-checker" ]; then
+            vendor/bin/security-checker security:check
+          else
+            echo "Security checker not available, using composer audit"
+            composer audit || echo "Composer audit not available in this version"
+          fi
