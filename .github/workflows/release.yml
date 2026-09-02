@@ -24,23 +24,12 @@ jobs:
     permissions:
       contents: write
 
-    defaults:
-      run:
-        working-directory: dry-mollie
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          path: dry-mollie
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout dry-ecommerce (path repository)
-        uses: actions/checkout@v5
-        with:
-          repository: TallieuTallieu/dry-ecommerce
-          path: dry-ecommerce
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2

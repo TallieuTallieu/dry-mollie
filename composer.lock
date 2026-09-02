@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "465cafc8c41fce9b6f8f09c0d7d25e30",
+    "content-hash": "6c729c3069a81bedb17f0fd8fdd4f23f",
     "packages": [
         {
             "name": "aws/aws-crt-php",
@@ -2985,11 +2985,17 @@
         },
         {
             "name": "tallieutallieu/dry-ecommerce",
-            "version": "4.0.x-dev",
+            "version": "3.10.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/TallieuTallieu/dry-ecommerce",
+                "reference": "6995d412d2d9d8322a63791e1441e36b79440048"
+            },
             "dist": {
-                "type": "path",
-                "url": "../dry-ecommerce",
-                "reference": "74e6c1b64cf895d7160a3e78ef605039ccd153f8"
+                "type": "zip",
+                "url": "https://api.github.com/repos/TallieuTallieu/dry-ecommerce/zipball/6995d412d2d9d8322a63791e1441e36b79440048",
+                "reference": "6995d412d2d9d8322a63791e1441e36b79440048",
+                "shasum": ""
             },
             "require": {
                 "php": ">=8.4",
@@ -3022,10 +3028,7 @@
                 "proprietary"
             ],
             "description": "E-commerce package",
-            "transport-options": {
-                "symlink": true,
-                "relative": true
-            }
+            "time": "2026-09-02T09:11:55+00:00"
         },
         {
             "name": "tallieutallieu/oak",
@@ -6791,9 +6794,7 @@
     ],
     "aliases": [],
     "minimum-stability": "beta",
-    "stability-flags": {
-        "tallieutallieu/dry-ecommerce": 20
-    },
+    "stability-flags": {},
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {

@@ -1,9 +1,5 @@
 name: Continuous Integration
 
-# Two-checkout layout: composer resolves tallieutallieu/dry-ecommerce from a
-# path repository at ../dry-ecommerce (untagged 4.x line), so the jobs check
-# this repo out into dry-mollie/ and the sibling next to it.
-
 on:
   pull_request:
     branches:
@@ -19,21 +15,10 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    defaults:
-      run:
-        working-directory: dry-mollie
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          path: dry-mollie
-
-      - name: Checkout dry-ecommerce (path repository)
-        uses: actions/checkout@v5
-        with:
-          repository: TallieuTallieu/dry-ecommerce
-          path: dry-ecommerce
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -59,7 +44,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.composer/cache
-          key: ${{ runner.os }}-composer-${{ hashFiles('dry-mollie/composer.lock') }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
           restore-keys: ${{ runner.os }}-composer-
 
       - name: Install dependencies
@@ -86,21 +71,10 @@ jobs:
     name: PHPStan Static Analysis
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: dry-mollie
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          path: dry-mollie
-
-      - name: Checkout dry-ecommerce (path repository)
-        uses: actions/checkout@v5
-        with:
-          repository: TallieuTallieu/dry-ecommerce
-          path: dry-ecommerce
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -125,7 +99,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.composer/cache
-          key: ${{ runner.os }}-composer-${{ hashFiles('dry-mollie/composer.lock') }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
           restore-keys: ${{ runner.os }}-composer-
 
       - name: Install dependencies
@@ -171,21 +145,10 @@ jobs:
     name: Security Check
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: dry-mollie
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          path: dry-mollie
-
-      - name: Checkout dry-ecommerce (path repository)
-        uses: actions/checkout@v5
-        with:
-          repository: TallieuTallieu/dry-ecommerce
-          path: dry-ecommerce
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2

@@ -17,8 +17,9 @@ See [docs/installation.md](docs/installation.md). Short version:
 composer require tallieutallieu/dry-mollie
 ```
 
-with the GitHub VCS repository configured, and — while dry-ecommerce 4.x is
-untagged — a path repository to a sibling `../dry-ecommerce` checkout.
+with the VCS repositories configured — dry-mollie and dry-ecommerce
+(`^3.10`, the release that ships the payment harness) from GitHub, dry
+from Bitbucket.
 
 ## Configuration (`mollie.php`)
 
