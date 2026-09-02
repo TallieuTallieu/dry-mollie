@@ -8,9 +8,6 @@ services:
     hostname: docker_app
     volumes:
       - .:/var/www/html
-      # composer.json resolves tallieutallieu/dry-ecommerce from a path
-      # repository at ../dry-ecommerce, which is outside the project mount.
-      - ../dry-ecommerce:/var/www/dry-ecommerce
       - ~/.ssh:/root/.ssh:ro
     ports:
       - '80'

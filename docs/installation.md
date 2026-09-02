@@ -2,12 +2,14 @@
 
 ## Requirements
 
-|               |          |
-| ------------- | -------- |
-| PHP           | `>= 8.4` |
-| dry-ecommerce | 4.x      |
+|               |                                              |
+| ------------- | -------------------------------------------- |
+| PHP           | `>= 8.4`                                     |
+| dry-ecommerce | `^3.10` — the payment harness arrived in 3.10.0 |
 
-oak `^3` and dry `^4` arrive transitively through dry-ecommerce.
+oak `^3` and dry `^4` arrive transitively through dry-ecommerce. Note the
+version numbering: dry-ecommerce's modern line (php 8.4, dry 4) is tagged
+`3.x` by its auto-release — `3.10` is a floor, not the old 3.x codebase.
 
 ## Getting the package
 
@@ -15,47 +17,21 @@ oak `^3` and dry `^4` arrive transitively through dry-ecommerce.
 composer require tallieutallieu/dry-mollie
 ```
 
-The repository is not on Packagist, so the project needs the VCS repository
-as well:
+Neither package is on Packagist, so the project needs both VCS
+repositories — dry-ecommerce over plain git (`no-api` avoids GitHub's
+authenticated API), dry from Bitbucket over SSH:
 
 ```json
 "repositories": [
-  { "type": "vcs", "url": "git@github.com:reinvanoyen/dry-mollie.git" }
+  { "type": "vcs", "url": "git@github.com:reinvanoyen/dry-mollie.git" },
+  {
+    "type": "vcs",
+    "url": "https://github.com/TallieuTallieu/dry-ecommerce",
+    "no-api": true
+  },
+  { "type": "vcs", "url": "git@bitbucket.org:tallieu/dry3.git" }
 ]
 ```
-
-### While dry-ecommerce 4.x is unreleased
-
-dry-ecommerce's 4.x line is untagged and lives on master, so this package —
-like every project on that line — resolves it from a sibling checkout. This
-repository's own `composer.json` carries the arrangement:
-
-```json
-"repositories": [
-  {
-    "type": "path",
-    "url": "../dry-ecommerce",
-    "options": {
-      "symlink": true,
-      "versions": { "tallieutallieu/dry-ecommerce": "4.0.x-dev" }
-    }
-  }
-],
-"require": { "tallieutallieu/dry-ecommerce": "^4.0@dev" }
-```
-
-The `versions` option pins what the path repository claims to be: without
-it, composer infers `dev-<branch>` from whatever branch the sibling checkout
-happens to have out, and the committed `composer.lock` would break the
-moment that branch changes.
-
-Two things this breaks that are easy to miss:
-
-- **Docker.** `../dry-ecommerce` is outside the project mount, so the
-  container needs it mounted or the symlink in `vendor/` dangles —
-  `docker-compose.yml` here mounts it at `/var/www/dry-ecommerce`.
-- **Deployment.** A path repository is a development arrangement. Nothing
-  built this way is deployable — switch to the tagged release first.
 
 ## Registering the service provider
 
