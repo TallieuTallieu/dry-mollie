@@ -5,12 +5,14 @@ use Oak\Config\Repository;
 use Oak\Contracts\Dispatcher\DispatcherInterface;
 use Oak\Dispatcher\Dispatcher;
 use Tests\Support\FakeRedirector;
+use Tests\Support\FixedMollieClientFactory;
 use Tests\Support\InMemoryOrder;
 use Tests\Support\NoopCartRelease;
 use Tests\Support\WebContainer;
 use Tnt\Ecommerce\Cart\CartRelease;
 use Tnt\Ecommerce\EcommerceServiceProvider;
 use Tnt\Ecommerce\Payment\PaymentStatus;
+use Tnt\Mollie\Contracts\MollieClientFactoryInterface;
 use Tnt\Mollie\MolliePayment;
 
 /*
@@ -65,25 +67,38 @@ function bootEcommerceListeners(): DispatcherInterface
  * The gateway under test, wired to a (mock) Mollie client and a redirector
  * that records instead of exiting. Config keys per docs/gateway.md.
  *
- * @param MollieApiClient $client
+ * A factory may be passed in place of a client, for the tests that need
+ * the client's own construction to fail.
+ *
+ * @param MollieApiClient|MollieClientFactoryInterface $client
  * @param DispatcherInterface $dispatcher
+ * @param array<string, mixed> $configOverrides
  * @return array{MolliePayment, FakeRedirector}
  */
 function makeGateway(
-    MollieApiClient $client,
-    DispatcherInterface $dispatcher
+    MollieApiClient|MollieClientFactoryInterface $client,
+    DispatcherInterface $dispatcher,
+    array $configOverrides = []
 ): array {
     $redirector = new FakeRedirector();
 
     $config = new Repository([
-        'mollie' => [
-            'api_key' => 'test_dummy',
-            'redirect_url' => 'https://shop.example/checkout/return/',
-            'webhook_url' => 'https://shop.example/mollie-webhook/',
-        ],
+        'mollie' => array_merge(
+            [
+                'api_key' => 'test_dummy',
+                'redirect_url' => 'https://shop.example/checkout/return/',
+                'webhook_url' => 'https://shop.example/mollie-webhook/',
+            ],
+            $configOverrides
+        ),
     ]);
 
-    $gateway = new MolliePayment($config, $client, $dispatcher, $redirector);
+    $factory =
+        $client instanceof MollieApiClient
+            ? new FixedMollieClientFactory($client)
+            : $client;
+
+    $gateway = new MolliePayment($config, $factory, $dispatcher, $redirector);
 
     return [$gateway, $redirector];
 }
@@ -155,15 +170,20 @@ function molliePaymentBody(
 /**
  * The same body once the money arrived — and optionally went back.
  *
+ * Refunds and chargebacks are given as amounts, not flags, because that is
+ * the only thing that tells a partial return from a full one. Each one adds
+ * both the link Mollie hangs off the payment and the running total it keeps
+ * beside it.
+ *
  * @param string $id
- * @param bool $refunds Hang a refunds link off the payment.
- * @param bool $chargebacks Hang a chargebacks link off the payment.
+ * @param string|null $refunded What has been refunded, e.g. '12.50'.
+ * @param string|null $chargedBack What has been charged back, e.g. '12.50'.
  * @return array<string, mixed>
  */
 function paidMolliePaymentBody(
     string $id,
-    bool $refunds = false,
-    bool $chargebacks = false
+    ?string $refunded = null,
+    ?string $chargedBack = null
 ): array {
     $links = [
         'self' => [
@@ -172,23 +192,36 @@ function paidMolliePaymentBody(
         ],
     ];
 
-    if ($refunds) {
+    $overrides = [
+        'paidAt' => '2026-09-01T10:05:00+00:00',
+    ];
+
+    if ($refunded !== null) {
         $links['refunds'] = [
             'href' => 'https://api.mollie.com/v2/payments/' . $id . '/refunds',
             'type' => 'application/hal+json',
         ];
+
+        $overrides['amountRefunded'] = [
+            'value' => $refunded,
+            'currency' => 'EUR',
+        ];
     }
 
-    if ($chargebacks) {
+    if ($chargedBack !== null) {
         $links['chargebacks'] = [
             'href' =>
                 'https://api.mollie.com/v2/payments/' . $id . '/chargebacks',
             'type' => 'application/hal+json',
         ];
+
+        $overrides['amountChargedBack'] = [
+            'value' => $chargedBack,
+            'currency' => 'EUR',
+        ];
     }
 
-    return molliePaymentBody($id, 'paid', [
-        'paidAt' => '2026-09-01T10:05:00+00:00',
-        '_links' => $links,
-    ]);
+    $overrides['_links'] = $links;
+
+    return molliePaymentBody($id, 'paid', $overrides);
 }

@@ -14,27 +14,76 @@ whose "Writing a gateway" guide this package is the worked proof of.
   `ecommerce_order.payment_id`, saves, and redirects the visitor to
   Mollie's checkout through the harness redirector. A **zero total** is
   paid on the spot, like `NullPayment`: `Paid` is dispatched and the
-  visitor goes straight to the return page. If Mollie **refuses** the
-  payment, the gateway dispatches `PaymentFailed` and returns without
-  redirecting: the order reads `failed`, stays re-placeable, and the
-  visitor still has their basket.
+  visitor goes straight to the return page.
+
+    A **failed attempt** is anything that did not end at a checkout page,
+    and they are all answered the same way: `PaymentFailed` is dispatched,
+    `payment_id` is cleared, and nothing is redirected. The order reads
+    `failed`, stays re-placeable, and the visitor still has their basket.
+    What counts:
+
+    | What went wrong                           | Mollie's exception                                           |
+    | ----------------------------------------- | ------------------------------------------------------------ |
+    | Mollie refuses the payment (4xx)          | `ValidationException`, `NotFoundException`, … `ApiException` |
+    | Mollie is down (503)                      | `ServiceUnavailableException` → `ServerException`            |
+    | The request times out (408)               | `RequestTimeoutException` → `NetworkRequestException`        |
+    | The connection never lands                | `RetryableNetworkRequestException`                           |
+    | The API key is missing or malformed       | `InvalidAuthenticationException`                             |
+    | Mollie creates a payment with no checkout | — (nowhere to send the visitor)                              |
+
+    The catch is on `MollieException`, the root of every class in that
+    column — not on `ApiException`, which in `mollie-api-php` v3 means only
+    "the API answered with an error", and so covers the first row alone.
+    The rest must not escape: by the time `pay()` runs, `Cart::place()` has
+    already placed the order, and a throw out of here leaves a placed,
+    unpaid order on an error page that a dry host answers with HTTP 200.
+
+    That is also why the client is **built inside** `pay()`, through
+    `MollieClientFactoryInterface`, rather than injected: `setApiKey()`
+    refuses a key that is not `test_`/`live_` by throwing, and an injected
+    client would throw that while the container assembles the gateway —
+    out of reach of any `catch` the gateway could write.
+
+    Clearing `payment_id` matters on a **re-placed** order, where the
+    previous attempt's id is still on the row: a failed attempt leaves no
+    live payment, so no webhook may speak for the order either.
+
 - **`statusOf($paymentId)`** asks Mollie's API where the money stands —
   never the webhook body, which carries only the id — and answers in the
   harness vocabulary:
 
-    | Mollie says                     | Answer            | Event dispatched  |
-    | ------------------------------- | ----------------- | ----------------- |
-    | `paid`                          | `Paid`            | `Paid`            |
-    | `paid` + refunds or chargebacks | `Refunded`        | `PaymentRefunded` |
-    | `failed`                        | `Failed`          | `PaymentFailed`   |
-    | `canceled`                      | `Canceled`        | `PaymentCanceled` |
-    | `expired`                       | `Expired`         | `PaymentExpired`  |
-    | `open`, `pending`, `authorized` | `Pending`         | — nothing         |
+    | Mollie says                     | Answer     | Event dispatched  |
+    | ------------------------------- | ---------- | ----------------- |
+    | `paid`                          | `Paid`     | `Paid`            |
+    | `paid`, everything returned     | `Refunded` | `PaymentRefunded` |
+    | `paid`, part of it returned     | `Paid`     | `Paid`            |
+    | `failed`                        | `Failed`   | `PaymentFailed`   |
+    | `canceled`                      | `Canceled` | `PaymentCanceled` |
+    | `expired`                       | `Expired`  | `PaymentExpired`  |
+    | `open`, `pending`, `authorized` | `Pending`  | — nothing         |
 
     `authorized` maps to pending deliberately: the money is only reserved,
     and a capture can still fail or be voided — Mollie sends another
     webhook when it settles into `paid`. Reporting it as paid would redeem
     coupons and release the cart for money that never arrived.
+
+    **Refunds are weighed, not counted.** Mollie keeps a refunded or
+    charged-back payment on `paid`; what went back hangs off it. The
+    gateway adds `amountRefunded` and `amountChargedBack` — in cents,
+    through `Money::fromDecimal()` — and only calls it `Refunded` when
+    they reach the payment's own amount. `hasRefunds()`/`hasChargebacks()`
+    are not asked, because they only say a link is there: by them a €1
+    refund on a €100 order would read as the whole order coming back. And
+    `Refunded` is **terminal** in dry-ecommerce — nothing may follow it,
+    and the order is never re-placeable again — so it is not a status to
+    reach on a partial return. A refund larger than the payment (Mollie
+    allows it, to reimburse return shipping) still counts as everything
+    back.
+
+    Unlike `pay()`, `statusOf()` **lets Mollie's failures out**. The
+    webhook wants them: the host answers non-2xx, and Mollie retries for
+    hours. Catching them here would answer 200 to a question that was
+    never asked.
 
 The gateway **never writes `payment_status`** — it dispatches, and
 dry-ecommerce's listeners write the column through
@@ -76,9 +125,14 @@ And point dry-ecommerce at the gateway:
 ```
 
 The service provider (register `\Tnt\Mollie\MollieServiceProvider` after
-`EcommerceServiceProvider`) binds the Mollie client; dry-ecommerce's
-provider sees the gateway implements `PaymentGatewayInterface` and binds
-the webhook plumbing.
+`EcommerceServiceProvider`) binds `MollieClientFactoryInterface`, and
+`MollieApiClient` through it for project code that wants the client
+itself; dry-ecommerce's provider sees the gateway implements
+`PaymentGatewayInterface` and binds the webhook plumbing.
+
+Note that resolving `MollieApiClient` from the container is what validates
+the key, so a bad one throws there — the gateway goes through the factory
+precisely to keep that throw inside `pay()`.
 
 ### 2. The webhook route
 
