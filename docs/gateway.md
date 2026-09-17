@@ -48,6 +48,12 @@ whose "Writing a gateway" guide this package is the worked proof of.
     previous attempt's id is still on the row: a failed attempt leaves no
     live payment, so no webhook may speak for the order either.
 
+    One of those failures is slow. A dropped connection is _retryable_, so
+    the Mollie client sleeps out its backoff before giving up — and it
+    does that inside `pay()`, with a visitor watching a checkout that has
+    not answered yet. The budget is configurable for that reason; see
+    [Retries](#retries).
+
 - **`statusOf($paymentId)`** asks Mollie's API where the money stands —
   never the webhook body, which carries only the id — and answers in the
   harness vocabulary:
@@ -114,6 +120,10 @@ return [
     // outside. On a local environment this needs a tunnel — Mollie
     // cannot post to localhost.
     'webhook_url' => \dry\abs_url('mollie-webhook/'),
+
+    // Optional; see Retries below. These are the defaults.
+    'retries' => 5,
+    'retry_delay_ms' => 1000,
 ];
 ```
 
@@ -133,6 +143,31 @@ itself; dry-ecommerce's provider sees the gateway implements
 Note that resolving `MollieApiClient` from the container is what validates
 the key, so a bad one throws there — the gateway goes through the factory
 precisely to keep that throw inside `pay()`.
+
+#### Retries
+
+`retries` and `retry_delay_ms` set what a **dropped connection** costs
+before the client gives up. Only that one failure is retried — a refusal,
+a 503 or a timeout is answered at once — and the wait before retry _n_ is
+`n * retry_delay_ms`, so the defaults spend up to 15 seconds
+(1 + 2 + 3 + 4 + 5) before giving an answer.
+
+They are the Mollie client's own defaults, kept so nothing changes under a
+project that has not thought about it. In `pay()` that waiting happens
+inside the checkout request, with a person watching it, so most projects
+want less:
+
+```php
+'retries' => 1,
+'retry_delay_ms' => 250,
+```
+
+Set `retries` to `0` to never retry. A value that is not a whole number is
+ignored and the default used.
+
+The same budget applies to `statusOf()`, where it matters much less: the
+failure goes out to the host either way, and Mollie's own retries — hours
+of them — are the recovery there.
 
 ### 2. The webhook route
 
