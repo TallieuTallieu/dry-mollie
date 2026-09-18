@@ -1,7 +1,7 @@
 # dry-mollie
 
 Mollie payment gateway for [dry-ecommerce](https://github.com/TallieuTallieu/dry-ecommerce)
-— the first gateway on that package's payment harness, and the shape a new
+— the first gateway on that package's payment ledger, and the shape a new
 provider package copies.
 
 ## Pages
@@ -21,6 +21,7 @@ provider package copies.
 | `retries`          | Optional; retries on a dropped connection (default `5`) |
 | `retry_delay_ms`   | Optional; the linear backoff step (default `1000`)      |
 
-The gateway dispatches events and never writes `payment_status` — the
-dry-ecommerce listeners own that column, and their transition guard is what
-makes replayed and late webhooks harmless.
+The gateway reports and dry-ecommerce writes: `pay()` answers what it did,
+`reportOf()` answers what Mollie says now, and the package's payment ledger
+records both and derives `payment_status`. The ledger's dedupe is what makes
+replayed and late webhooks harmless.

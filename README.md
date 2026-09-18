@@ -2,7 +2,7 @@
 
 Mollie payment gateway for
 [dry-ecommerce](https://github.com/TallieuTallieu/dry-ecommerce) — the
-first gateway on that package's payment harness
+first gateway on that package's payment ledger
 (`PaymentGatewayInterface` + `PaymentWebhook`), and the reference shape
 for new provider packages.
 
@@ -15,7 +15,7 @@ composer require tallieutallieu/dry-mollie
 ```
 
 with the VCS repositories configured — dry-mollie and dry-ecommerce
-(`^3.10`, the release that ships the payment harness) from GitHub, dry
+(`^3.12`, the release that ships the payment ledger) from GitHub, dry
 from Bitbucket.
 
 ## Wiring
@@ -29,5 +29,5 @@ Three things, all project-side and all documented in
 2. One webhook route handed to dry-ecommerce's `PaymentWebhook`.
 3. A return page that reads the order's own payment status.
 
-The gateway dispatches events and never writes `payment_status` — the
-dry-ecommerce listeners own that column.
+The gateway reports and never writes: dry-ecommerce's payment ledger
+records what `pay()` and `reportOf()` answer and derives `payment_status`.

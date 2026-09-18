@@ -1,26 +1,52 @@
 # The gateway
 
-How dry-mollie sits on dry-ecommerce's payment harness, and the three
+How dry-mollie sits on dry-ecommerce's payment ledger, and the three
 things a project wires. Background: dry-ecommerce's `docs/payment.md`,
 whose "Writing a gateway" guide this package is the worked proof of.
 
+## Report, don't write
+
+dry-ecommerce keeps an append-only payment ledger, and derives an order's
+money and its `payment_status` from it. The rule for a gateway is **it
+reports, the package writes**. `MolliePayment` never writes `payment_id`
+or `payment_status`, never dispatches a payment event, never touches a
+table and never redirects. It answers two questions, and the package turns
+the answers into ledger entries:
+
+- what did `pay()` do?
+- what does Mollie say about this payment now?
+
+Every entry is filed under `provider()`, which is `'mollie'`. Never change
+it: the entries a shop already has would be orphaned.
+
 ## What the package does
 
-`MolliePayment` implements `PaymentGatewayInterface`:
+`MolliePayment` implements `PaymentGatewayInterface`.
 
-- **`pay($order)`** creates the Mollie payment — amount from the order's
-  integer cents (`Money::toDecimal()`), the order reference as description,
-  the configured return and webhook URLs — writes the Mollie id onto
-  `ecommerce_order.payment_id`, saves, and redirects the visitor to
-  Mollie's checkout through the harness redirector. A **zero total** is
-  paid on the spot, like `NullPayment`: `Paid` is dispatched and the
-  visitor goes straight to the return page.
+- **`pay($order)`** creates the Mollie payment and answers with a
+  `PaymentOutcome`. The payment gets the amount from the order's integer
+  cents (`Money::toDecimal()`), the order reference as description, and
+  the configured return and webhook URLs.
 
-    A **failed attempt** is anything that did not end at a checkout page,
-    and they are all answered the same way: `PaymentFailed` is dispatched,
-    `payment_id` is cleared, and nothing is redirected. The order reads
+    | What happened                            | `pay()` answers                             |
+    | ---------------------------------------- | ------------------------------------------- |
+    | Mollie created a payment with a checkout | `PaymentRedirect($id, $checkoutUrl)`        |
+    | The order total is zero                  | `PaymentSettled` (below)                    |
+    | Mollie created a payment with no checkout | `PaymentRefused($id)`                      |
+    | Anything that threw a `MollieException`  | `PaymentRefused()`                          |
+
+    On a redirect, the package records the attempt, points `payment_id` at
+    it and sends the visitor to Mollie. On a refusal, the order reads
     `failed`, stays re-placeable, and the visitor still has their basket.
-    What counts:
+
+    A **zero total** never reaches Mollie. It is settled on the spot, like
+    `NullPayment`: a `Paid` report with one €0 `captured` movement, under a
+    payment id minted per placement (`free_…`). The package counts a €0
+    capture as paid. Nothing redirects after a settlement: `Cart::place()`
+    returns the order and the project's controller sends the visitor to
+    its thank-you page.
+
+    Every failure to create the payment is refused the same way:
 
     | What went wrong                           | Mollie's exception                                           |
     | ----------------------------------------- | ------------------------------------------------------------ |
@@ -29,14 +55,13 @@ whose "Writing a gateway" guide this package is the worked proof of.
     | The request times out (408)               | `RequestTimeoutException` → `NetworkRequestException`        |
     | The connection never lands                | `RetryableNetworkRequestException`                           |
     | The API key is missing or malformed       | `InvalidAuthenticationException`                             |
-    | Mollie creates a payment with no checkout | — (nowhere to send the visitor)                              |
 
     The catch is on `MollieException`, the root of every class in that
     column — not on `ApiException`, which in `mollie-api-php` v3 means only
     "the API answered with an error", and so covers the first row alone.
-    The rest must not escape: by the time `pay()` runs, `Cart::place()` has
-    already placed the order, and a throw out of here leaves a placed,
-    unpaid order on an error page that a dry host answers with HTTP 200.
+    None of them may escape: a refusal is an outcome, and a throw out of
+    `pay()` would leave a placed order pending with nobody on the way to
+    pay it.
 
     That is also why the client is **built inside** `pay()`, through
     `MollieClientFactoryInterface`, rather than injected: `setApiKey()`
@@ -44,64 +69,73 @@ whose "Writing a gateway" guide this package is the worked proof of.
     client would throw that while the container assembles the gateway —
     out of reach of any `catch` the gateway could write.
 
-    Clearing `payment_id` matters on a **re-placed** order, where the
-    previous attempt's id is still on the row: a failed attempt leaves no
-    live payment, so no webhook may speak for the order either.
-
     One of those failures is slow. A dropped connection is _retryable_, so
     the Mollie client sleeps out its backoff before giving up — and it
     does that inside `pay()`, with a visitor watching a checkout that has
     not answered yet. The budget is configurable for that reason; see
     [Retries](#retries).
 
-- **`statusOf($paymentId)`** asks Mollie's API where the money stands —
-  never the webhook body, which carries only the id — and answers in the
-  harness vocabulary:
+- **`reportOf($paymentId)`** asks Mollie's API about the payment — never
+  the webhook body, which carries only the id — and answers with a
+  `PaymentReport`: a status and every money movement Mollie knows of.
 
-    | Mollie says                     | Answer     | Event dispatched  |
-    | ------------------------------- | ---------- | ----------------- |
-    | `paid`                          | `Paid`     | `Paid`            |
-    | `paid`, everything returned     | `Refunded` | `PaymentRefunded` |
-    | `paid`, part of it returned     | `Paid`     | `Paid`            |
-    | `failed`                        | `Failed`   | `PaymentFailed`   |
-    | `canceled`                      | `Canceled` | `PaymentCanceled` |
-    | `expired`                       | `Expired`  | `PaymentExpired`  |
-    | `open`, `pending`, `authorized` | `Pending`  | — nothing         |
+    **The status** is Mollie's view of the payment:
+
+    | Mollie says                     | Status     |
+    | ------------------------------- | ---------- |
+    | `paid`                          | `Paid`     |
+    | `failed`                        | `Failed`   |
+    | `canceled`                      | `Canceled` |
+    | `expired`                       | `Expired`  |
+    | `open`, `pending`, `authorized` | `Pending`  |
 
     `authorized` maps to pending deliberately: the money is only reserved,
     and a capture can still fail or be voided — Mollie sends another
-    webhook when it settles into `paid`. Reporting it as paid would redeem
-    coupons and release the cart for money that never arrived.
+    webhook when it settles into `paid`.
 
-    **Refunds are weighed, not counted.** Mollie keeps a refunded or
-    charged-back payment on `paid`; what went back hangs off it. The
-    gateway adds `amountRefunded` and `amountChargedBack` — in cents,
-    through `Money::fromDecimal()` — and only calls it `Refunded` when
-    they reach the payment's own amount. `hasRefunds()`/`hasChargebacks()`
-    are not asked, because they only say a link is there: by them a €1
-    refund on a €100 order would read as the whole order coming back. And
-    `Refunded` is **terminal** in dry-ecommerce — nothing may follow it,
-    and the order is never re-placeable again — so it is not a status to
-    reach on a partial return. A refund larger than the payment (Mollie
-    allows it, to reimburse return shipping) still counts as everything
-    back.
+    The gateway never answers `Refunded` or `PartiallyRefunded`. Mollie
+    keeps a refunded or charged-back payment on `paid`, and whether an
+    order is refunded is arithmetic the ledger does over the movements.
 
-    Unlike `pay()`, `statusOf()` **lets Mollie's failures out**. The
+    **The movements**, all in cents through `Money::fromDecimal()`, each
+    under Mollie's own id for it:
+
+    | Mollie has                               | Movement                                   |
+    | ---------------------------------------- | ------------------------------------------ |
+    | a `paid` payment                         | `captured`, reference `tr_…`               |
+    | a refund `processing` or `refunded`      | `refunded`, reference `re_…`               |
+    | a refund `failed`                        | `refund_reversed`, reference `re_…`        |
+    | a refund `queued`, `pending`, `canceled` | nothing — no money moved                   |
+    | a chargeback                             | `chargeback`, reference `chb_…`            |
+    | a chargeback with `reversedAt`           | also `chargeback_reversed`, same reference |
+
+    A `Paid` report always carries its capture: the ledger decides "paid"
+    from the money, not from the word. A reversed chargeback keeps its
+    `chargeback` movement, because the reversal needs its counterpart. A
+    failed refund is reported as reversed even if its refund was never
+    seen; the ledger drops a reversal whose counterpart it does not hold.
+
+    Refunds and chargebacks come embedded in the one `GET`
+    (`embed=refunds,chargebacks`). Pass the embeds to the SDK as a list:
+    `mollie-api-php` drops a comma string without a word.
+
+    **It reports everything, every time.** The ledger deduplicates on
+    `(provider, kind, reference)` and writes only what it does not hold
+    yet. A replayed webhook writes nothing, a late `expired` after the
+    money arrived is recorded and outranked by the capture, and a refund
+    still lands after `paid`. The gateway never remembers what it reported
+    before.
+
+    Unlike `pay()`, `reportOf()` **lets Mollie's failures out**. The
     webhook wants them: the host answers non-2xx, and Mollie retries for
     hours. Catching them here would answer 200 to a question that was
     never asked.
 
-The gateway **never writes `payment_status`** — it dispatches, and
-dry-ecommerce's listeners write the column through
-`PaymentStatus::canTransitionTo()`. That guard is also the idempotency: a
-replayed `paid` webhook writes nothing, a late `expired` after the money
-arrived writes nothing, and a refund still lands after `paid`.
-
-**Re-placement:** `Cart::place()` on a failed/canceled/expired order calls
-`pay()` again. That is a fresh Mollie payment — the old one is dead at
-Mollie — so `payment_id` is overwritten and the amount is re-read from the
-re-frozen order. A webhook for the dead attempt finds no order and gets a
-404, which is the right answer for it.
+**Re-placement:** `Cart::place()` on a failed, canceled or expired order
+calls `pay()` again. That is a fresh Mollie payment, and the new attempt
+becomes the order's current one. The old attempt's entries stay, and a
+late webhook for it still finds the order through the ledger: if that old
+payment gets paid after all, its capture counts.
 
 ## What the project wires
 
@@ -165,7 +199,7 @@ want less:
 Set `retries` to `0` to never retry. A value that is not a whole number is
 ignored and the default used.
 
-The same budget applies to `statusOf()`, where it matters much less: the
+The same budget applies to `reportOf()`, where it matters much less: the
 failure goes out to the host either way, and Mollie's own retries — hours
 of them — are the recovery there.
 
@@ -187,8 +221,9 @@ handed to the package handler:
 ```
 
 Answer 200 (an empty body is fine) when `handle()` returns; the 404 tells
-Mollie the id means nothing here. On an exception from Mollie's own API
-(`statusOf()` interrogates it), let the request fail — Mollie retries for
+Mollie the id means nothing here (the package has recorded it as an
+`unknown_payment` entry by then). On an exception from Mollie's own API
+(`reportOf()` interrogates it), let the request fail — Mollie retries for
 hours, which is exactly the recovery you want.
 
 ### 3. The return page
@@ -201,11 +236,13 @@ order's own state** and concludes nothing from the visit itself:
 $order = OrderRepository::create()->byId($orderId)->firstOrNull();
 
 match ($order->getPaymentStatus()) {
-    PaymentStatus::Paid => /* thank-you */,
+    PaymentStatus::Paid,
+    PaymentStatus::PartiallyRefunded => /* thank-you */,
     PaymentStatus::Pending => /* "confirming your payment…" — the webhook
                                  is still on its way; poll or refresh */,
-    default => /* failed/canceled/expired: offer the basket again —
-                  the order is re-placeable and the cart still stands */,
+    default => /* failed/canceled/expired/refunded: offer the basket
+                  again — the order is re-placeable and the cart still
+                  stands */,
 };
 ```
 
@@ -224,9 +261,11 @@ references.
   arrangement for project-level tests: the gateway asks
   `MollieClientFactoryInterface` for its client, so bind a factory that
   hands out the mock (see `tests/Support/FixedMollieClientFactory.php`).
+  The webhook tests run dry-ecommerce's real `PaymentLedger` in memory
+  (`tests/Support/InMemoryPaymentLedger.php`).
 
 ## See also
 
 - [Installation](installation.md) — requirements and the VCS repositories
-- dry-ecommerce `docs/payment.md` — the harness, the events, the guard
+- dry-ecommerce `docs/payment.md` — the ledger, the derived status, the events
 - dry-ecommerce `docs/orders.md` — re-placement, the return page's rules
