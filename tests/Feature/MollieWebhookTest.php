@@ -11,6 +11,7 @@ declare(strict_types=1);
  * idempotency story.
  */
 
+use Mollie\Api\Exceptions\ServiceUnavailableException;
 use Mollie\Api\Fake\MockMollieClient;
 use Mollie\Api\Fake\MockResponse;
 use Mollie\Api\Fake\SequenceMockResponse;
@@ -44,13 +45,41 @@ it('maps every Mollie status onto the harness vocabulary', function (
         PaymentStatus::Pending,
     ],
     'paid' => [paidMolliePaymentBody('tr_first'), PaymentStatus::Paid],
-    'paid with refunds' => [
-        paidMolliePaymentBody('tr_first', refunds: true),
+    // Refunded is terminal in dry-ecommerce, so only a full return earns it.
+    'paid, fully refunded' => [
+        paidMolliePaymentBody('tr_first', refunded: '12.50'),
         PaymentStatus::Refunded,
     ],
-    'paid with chargebacks' => [
-        paidMolliePaymentBody('tr_first', chargebacks: true),
+    'paid, partially refunded' => [
+        paidMolliePaymentBody('tr_first', refunded: '1.00'),
+        PaymentStatus::Paid,
+    ],
+    'paid, fully charged back' => [
+        paidMolliePaymentBody('tr_first', chargedBack: '12.50'),
         PaymentStatus::Refunded,
+    ],
+    'paid, partially charged back' => [
+        paidMolliePaymentBody('tr_first', chargedBack: '1.00'),
+        PaymentStatus::Paid,
+    ],
+    // Refunds and chargebacks add up.
+    'paid, refunded and charged back to the full amount' => [
+        paidMolliePaymentBody(
+            'tr_first',
+            refunded: '10.00',
+            chargedBack: '2.50'
+        ),
+        PaymentStatus::Refunded,
+    ],
+    // Mollie allows refunding more, to reimburse return shipping.
+    'paid, refunded over the payment' => [
+        paidMolliePaymentBody('tr_first', refunded: '15.00'),
+        PaymentStatus::Refunded,
+    ],
+    // The refund link is there but nothing has moved yet.
+    'paid, refund link with nothing refunded' => [
+        paidMolliePaymentBody('tr_first', refunded: '0.00'),
+        PaymentStatus::Paid,
     ],
     'failed' => [
         molliePaymentBody('tr_first', 'failed'),
@@ -149,7 +178,9 @@ it('still refunds after the money arrived', function (): void {
     $client = new MockMollieClient([
         GetPaymentRequest::class => new SequenceMockResponse(
             MockResponse::ok(paidMolliePaymentBody('tr_first')),
-            MockResponse::ok(paidMolliePaymentBody('tr_first', refunds: true))
+            MockResponse::ok(
+                paidMolliePaymentBody('tr_first', refunded: '12.50')
+            )
         ),
     ]);
 
@@ -165,6 +196,21 @@ it('still refunds after the money arrived', function (): void {
 
     expect($order->payment_status)->toBe('refunded');
 });
+
+it('lets a Mollie failure out of statusOf', function (): void {
+    // The webhook needs it to answer non-2xx, so Mollie retries.
+    $client = new MockMollieClient([
+        GetPaymentRequest::class => MockResponse::error(
+            503,
+            'Service Unavailable',
+            'The Mollie API is temporarily unavailable'
+        ),
+    ]);
+
+    [$gateway] = makeGateway($client, bootEcommerceListeners());
+
+    $gateway->statusOf('tr_first');
+})->throws(ServiceUnavailableException::class);
 
 it('refuses a payment id no order carries', function (): void {
     $dispatcher = bootEcommerceListeners();

@@ -24,7 +24,7 @@ Three things, all project-side and all documented in
 [docs/gateway.md](docs/gateway.md):
 
 1. `config/mollie.php` — `api_key` (from the env), `redirect_url`,
-   `webhook_url`; and `'payment' => \Tnt\Mollie\MolliePayment::class` in
+   `webhook_url`, optionally `retries`/`retry_delay_ms`; and `'payment' => \Tnt\Mollie\MolliePayment::class` in
    `config/ecommerce.php`.
 2. One webhook route handed to dry-ecommerce's `PaymentWebhook`.
 3. A return page that reads the order's own payment status.

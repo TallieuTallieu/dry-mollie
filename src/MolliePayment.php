@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tnt\Mollie;
 
-use Mollie\Api\Exceptions\ApiException;
-use Mollie\Api\MollieApiClient;
+use Mollie\Api\Exceptions\MollieException;
+use Mollie\Api\Resources\Payment;
 use Oak\Contracts\Config\RepositoryInterface;
 use Oak\Contracts\Dispatcher\DispatcherInterface;
 use Tnt\Ecommerce\Contracts\OrderInterface;
@@ -16,6 +16,7 @@ use Tnt\Ecommerce\Events\Order\PaymentFailed;
 use Tnt\Ecommerce\Model\Order;
 use Tnt\Ecommerce\Money;
 use Tnt\Ecommerce\Payment\PaymentStatus;
+use Tnt\Mollie\Contracts\MollieClientFactoryInterface;
 
 /**
  * The Mollie gateway on dry-ecommerce's payment harness: pay() creates the
@@ -28,13 +29,13 @@ class MolliePayment implements PaymentGatewayInterface
 {
     /**
      * @param RepositoryInterface $config
-     * @param MollieApiClient $mollie
+     * @param MollieClientFactoryInterface $clients
      * @param DispatcherInterface $dispatcher
      * @param RedirectorInterface $redirector
      */
     public function __construct(
         private RepositoryInterface $config,
-        private MollieApiClient $mollie,
+        private MollieClientFactoryInterface $clients,
         private DispatcherInterface $dispatcher,
         private RedirectorInterface $redirector
     ) {}
@@ -63,7 +64,10 @@ class MolliePayment implements PaymentGatewayInterface
         }
 
         try {
-            $molliePayment = $this->mollie->payments->create([
+            // Built here, not injected, so a bad API key fails inside this try.
+            $mollie = $this->clients->make();
+
+            $molliePayment = $mollie->payments->create([
                 'amount' => [
                     'currency' => 'EUR',
                     // The order's money is integer cents; Mollie wants
@@ -74,14 +78,18 @@ class MolliePayment implements PaymentGatewayInterface
                 'redirectUrl' => $this->returnUrl($order),
                 'webhookUrl' => $this->configuredUrl('mollie.webhook_url'),
             ]);
-        } catch (ApiException) {
-            // The attempt never left the shop. Failed keeps the order
-            // re-placeable, so the visitor can try again from the basket
-            // that is still standing.
-            $this->dispatcher->dispatch(
-                PaymentFailed::class,
-                new PaymentFailed($order)
-            );
+        } catch (MollieException) {
+            // The root of every Mollie failure; see docs/gateway.md.
+            $this->reportAFailedAttempt($order);
+
+            return;
+        }
+
+        $checkoutUrl = $molliePayment->getCheckoutUrl();
+
+        if ($checkoutUrl === null) {
+            // Nowhere to send the visitor: as dead as a refused payment.
+            $this->reportAFailedAttempt($order);
 
             return;
         }
@@ -91,31 +99,30 @@ class MolliePayment implements PaymentGatewayInterface
         $order->payment_id = $molliePayment->id;
         $order->save();
 
-        $checkoutUrl = $molliePayment->getCheckoutUrl();
-
-        if ($checkoutUrl !== null) {
-            $this->redirector->redirect($checkoutUrl);
-        }
+        $this->redirector->redirect($checkoutUrl);
     }
 
     /**
      * Where the money for a Mollie payment stands, per Mollie's API — never
      * per the webhook body, which carries only the id.
      *
+     * Failures are deliberately not caught here: the webhook wants them, so
+     * the host can answer non-2xx and Mollie retries for hours.
+     *
      * @param string $paymentId
      * @return PaymentStatus
      *
-     * @throws ApiException When Mollie cannot be reached or does not know
-     *                      the payment.
+     * @throws MollieException When Mollie cannot be reached or does not know
+     *                         the payment, or the API key is not usable.
      */
     public function statusOf(string $paymentId): PaymentStatus
     {
-        $payment = $this->mollie->payments->get($paymentId);
+        $payment = $this->clients->make()->payments->get($paymentId);
 
         if ($payment->isPaid()) {
             // Mollie keeps a refunded or charged-back payment on paid; the
             // money that went back hangs off it as refunds/chargebacks.
-            return $payment->hasRefunds() || $payment->hasChargebacks()
+            return $this->wasFullyReturned($payment)
                 ? PaymentStatus::Refunded
                 : PaymentStatus::Paid;
         }
@@ -136,6 +143,77 @@ class MolliePayment implements PaymentGatewayInterface
         // and a capture can still fail or be voided: nothing is reported
         // until Mollie says paid. Pending dispatches no event.
         return PaymentStatus::Pending;
+    }
+
+    /**
+     * Whether everything the customer paid has gone back to them.
+     *
+     * `hasRefunds()`/`hasChargebacks()` only say a link is there, so they
+     * cannot tell a €1 refund on a €100 order from a full one. They are
+     * not asked: the amounts are, in cents. It matters because `Refunded`
+     * is terminal in dry-ecommerce — nothing may follow it — so a partial
+     * refund must stay `Paid`.
+     *
+     * A refund over the payment (Mollie allows it, to reimburse return
+     * shipping) counts as full, as does a full chargeback.
+     *
+     * @param Payment $payment
+     * @return bool
+     *
+     * @throws \Tnt\Ecommerce\NotAnAmount If Mollie's amounts are unreadable.
+     */
+    private function wasFullyReturned(Payment $payment): bool
+    {
+        $paid = $this->cents($payment->amount);
+
+        // Nothing was charged, so nothing can have gone back.
+        if ($paid <= 0) {
+            return false;
+        }
+
+        $returned =
+            $this->cents($payment->amountRefunded) +
+            $this->cents($payment->amountChargedBack);
+
+        return $returned >= $paid;
+    }
+
+    /**
+     * A Mollie amount object read as integer cents — the package's money.
+     * Absent amounts (Mollie omits the zero ones) read as nothing.
+     *
+     * @param \stdClass|null $amount
+     * @return int
+     *
+     * @throws \Tnt\Ecommerce\NotAnAmount If the value is not an exact amount.
+     */
+    private function cents(?\stdClass $amount): int
+    {
+        $value = $amount->value ?? null;
+
+        return is_string($value) ? Money::fromDecimal($value) : 0;
+    }
+
+    /**
+     * The attempt never left the shop. `Failed` keeps the order
+     * re-placeable, so the visitor can try again from the basket that is
+     * still standing — and `payment_id` is dropped, because there is no
+     * live payment to answer a webhook for.
+     *
+     * @param Order $order
+     * @return void
+     */
+    private function reportAFailedAttempt(Order $order): void
+    {
+        if ($order->payment_id !== null) {
+            $order->payment_id = null;
+            $order->save();
+        }
+
+        $this->dispatcher->dispatch(
+            PaymentFailed::class,
+            new PaymentFailed($order)
+        );
     }
 
     /**
