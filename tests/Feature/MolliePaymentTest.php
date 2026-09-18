@@ -5,20 +5,28 @@ declare(strict_types=1);
 /*
  * pay(), against a mock Mollie client (no network anywhere): the payment is
  * created from the frozen order — cents through Money::toDecimal(), the
- * reference as description, the configured URLs — the payment id lands on
- * the order, and the visitor is sent to Mollie's checkout through the
- * harness redirector.
+ * reference as description, the configured URLs — and pay() answers what
+ * happened. It writes nothing on the order and redirects nowhere; the
+ * package records the outcome and sends the visitor.
  */
 
 use Mollie\Api\Fake\MockMollieClient;
 use Mollie\Api\Fake\MockResponse;
-use Mollie\Api\Fake\SequenceMockResponse;
 use Mollie\Api\Http\LinearRetryStrategy;
 use Mollie\Api\Http\PendingRequest;
 use Mollie\Api\Http\Requests\CreatePaymentRequest;
 use Oak\Config\Repository;
 use Tests\Support\NetworkFailure;
+use Tnt\Ecommerce\Payment\EntryKind;
+use Tnt\Ecommerce\Payment\PaymentRedirect;
+use Tnt\Ecommerce\Payment\PaymentRefused;
+use Tnt\Ecommerce\Payment\PaymentSettled;
+use Tnt\Ecommerce\Payment\PaymentStatus;
 use Tnt\Mollie\MollieClientFactory;
+
+it('files its entries under mollie', function (): void {
+    expect(makeGateway(new MockMollieClient([]))->provider())->toBe('mollie');
+});
 
 it('creates the Mollie payment from the frozen order', function (): void {
     $client = new MockMollieClient([
@@ -27,10 +35,8 @@ it('creates the Mollie payment from the frozen order', function (): void {
         ),
     ]);
 
-    [$gateway, $redirector] = makeGateway($client, bootEcommerceListeners());
-
     $order = orderAwaitingPayment();
-    $gateway->pay($order);
+    $outcome = makeGateway($client)->pay($order);
 
     $client->assertSent(function (PendingRequest $request): bool {
         $payload = $request->payload()?->all();
@@ -51,34 +57,70 @@ it('creates the Mollie payment from the frozen order', function (): void {
                 'https://shop.example/mollie-webhook/';
     });
 
-    expect($order->payment_id)->toBe('tr_first');
-    expect($redirector->sentTo)->toBe([
-        'https://pay.mollie.example/checkout/tr_first',
-    ]);
+    expect($outcome)->toEqual(
+        new PaymentRedirect(
+            'tr_first',
+            'https://pay.mollie.example/checkout/tr_first'
+        )
+    );
 
-    // The gateway reported nothing — an open payment is not an outcome.
-    expect($order->payment_status)->toBe('pending');
+    // The package writes the pointer, not the gateway.
+    expect($order->payment_id)->toBeNull();
 });
 
-it('pays a zero total on the spot, like NullPayment', function (): void {
+it('settles a zero total on the spot, like NullPayment', function (): void {
     // No expected responses: any API call would fail the test loudly.
-    $client = new MockMollieClient([]);
-
-    [$gateway, $redirector] = makeGateway($client, bootEcommerceListeners());
+    $gateway = makeGateway(new MockMollieClient([]));
 
     $order = orderAwaitingPayment();
     $order->total = 0;
 
-    $gateway->pay($order);
+    $outcome = $gateway->pay($order);
 
-    expect($order->payment_status)->toBe('paid');
-    expect($order->payment_id)->toBeNull();
-    expect($redirector->sentTo)->toBe([
-        'https://shop.example/checkout/return/?order=7',
-    ]);
+    expect($outcome)->toBeInstanceOf(PaymentSettled::class);
+
+    /** @var PaymentSettled $outcome */
+    $report = $outcome->report;
+
+    expect($report->paymentId)->toStartWith('free_');
+    expect($report->status)->toBe(PaymentStatus::Paid);
+    expect($report->movements)->toHaveCount(1);
+    expect($report->movements[0]->kind)->toBe(EntryKind::Captured);
+    expect($report->movements[0]->reference)->toBe($report->paymentId);
+    expect($report->movements[0]->amount)->toBe(0);
 });
 
-it('reports a failed attempt however the payment fails', function (
+it('mints a fresh free payment per placement', function (): void {
+    // A re-placement is an attempt of its own, with a capture of its own.
+    $gateway = makeGateway(new MockMollieClient([]));
+
+    $order = orderAwaitingPayment();
+    $order->total = 0;
+
+    /** @var PaymentSettled $first */
+    $first = $gateway->pay($order);
+    /** @var PaymentSettled $second */
+    $second = $gateway->pay($order);
+
+    expect($first->report->paymentId)->not->toBe($second->report->paymentId);
+});
+
+it('reads a free order as paid once the ledger has it', function (): void {
+    $ledger = makeLedger();
+
+    $order = orderAwaitingPayment();
+    $order->total = 0;
+
+    $ledger->start(
+        $order,
+        'mollie',
+        makeGateway(new MockMollieClient([]))->pay($order)
+    );
+
+    expect($order->getPaymentStatus())->toBe(PaymentStatus::Paid);
+});
+
+it('answers refused however the payment fails', function (
     MockResponse|Closure $response
 ): void {
     $client = new MockMollieClient(
@@ -89,14 +131,10 @@ it('reports a failed attempt however the payment fails', function (
     // Skip the backoff a dropped connection would otherwise sit out.
     $client->setRetryStrategy(new LinearRetryStrategy(maxRetries: 0));
 
-    [$gateway, $redirector] = makeGateway($client, bootEcommerceListeners());
-
     $order = orderAwaitingPayment();
-    $gateway->pay($order);
 
-    expect($order->payment_status)->toBe('failed');
+    expect(makeGateway($client)->pay($order))->toEqual(new PaymentRefused());
     expect($order->payment_id)->toBeNull();
-    expect($redirector->sentTo)->toBe([]);
 })->with([
     // ValidationException, under ApiException.
     'Mollie refuses the payment' => fn() => MockResponse::unprocessableEntity(
@@ -122,30 +160,19 @@ it('reports a failed attempt however the payment fails', function (
     ): MockResponse => throw new NetworkFailure('Connection refused'),
 ]);
 
-it(
-    'reports a failed attempt when the API key is not usable',
-    function (): void {
-        // The key is refused while the client is built, before any request.
-        $factory = new MollieClientFactory(
-            new Repository(['mollie' => ['api_key' => 'not-a-mollie-key']])
-        );
+it('answers refused when the API key is not usable', function (): void {
+    // The key is refused while the client is built, before any request.
+    $factory = new MollieClientFactory(
+        new Repository(['mollie' => ['api_key' => 'not-a-mollie-key']])
+    );
 
-        [$gateway, $redirector] = makeGateway(
-            $factory,
-            bootEcommerceListeners()
-        );
-
-        $order = orderAwaitingPayment();
-        $gateway->pay($order);
-
-        expect($order->payment_status)->toBe('failed');
-        expect($order->payment_id)->toBeNull();
-        expect($redirector->sentTo)->toBe([]);
-    }
-);
+    expect(makeGateway($factory)->pay(orderAwaitingPayment()))->toEqual(
+        new PaymentRefused()
+    );
+});
 
 it(
-    'reports a failed attempt when the payment has no checkout',
+    'answers refused, with the id, when the payment has no checkout',
     function (): void {
         // Mollie created the payment but gave it no checkout link.
         $client = new MockMollieClient([
@@ -162,73 +189,25 @@ it(
             ),
         ]);
 
-        [$gateway, $redirector] = makeGateway(
-            $client,
-            bootEcommerceListeners()
+        expect(makeGateway($client)->pay(orderAwaitingPayment()))->toEqual(
+            new PaymentRefused('tr_first')
         );
-
-        $order = orderAwaitingPayment();
-        $gateway->pay($order);
-
-        expect($order->payment_status)->toBe('failed');
-        expect($order->payment_id)->toBeNull();
-        expect($redirector->sentTo)->toBe([]);
     }
 );
 
-it('drops the old payment id when the retry fails', function (): void {
-    // A late webhook for the dead first payment must not speak for the order.
+it('leaves a refused order failed once the ledger has it', function (): void {
     $client = new MockMollieClient([
-        CreatePaymentRequest::class => new SequenceMockResponse(
-            MockResponse::created(molliePaymentBody('tr_first', 'open')),
-            MockResponse::error(
-                503,
-                'Service Unavailable',
-                'The Mollie API is temporarily unavailable'
-            )
+        CreatePaymentRequest::class => MockResponse::error(
+            503,
+            'Service Unavailable',
+            'The Mollie API is temporarily unavailable'
         ),
     ]);
 
-    [$gateway, $redirector] = makeGateway($client, bootEcommerceListeners());
-
+    $ledger = makeLedger();
     $order = orderAwaitingPayment();
 
-    $gateway->pay($order);
-    expect($order->payment_id)->toBe('tr_first');
+    $ledger->start($order, 'mollie', makeGateway($client)->pay($order));
 
-    $gateway->pay($order);
-
-    expect($order->payment_id)->toBeNull();
-    expect($order->payment_status)->toBe('failed');
-    expect($redirector->sentTo)->toBe([
-        'https://pay.mollie.example/checkout/tr_first',
-    ]);
-});
-
-it('gives a re-placed order a fresh payment id', function (): void {
-    // Re-placement calls pay() again on the same row. The old payment is
-    // dead at Mollie, so its id is overwritten — a webhook for the dead
-    // attempt then finds no order, which is the right answer for it.
-    $client = new MockMollieClient([
-        CreatePaymentRequest::class => new SequenceMockResponse(
-            MockResponse::created(molliePaymentBody('tr_first', 'open')),
-            MockResponse::created(molliePaymentBody('tr_second', 'open'))
-        ),
-    ]);
-
-    [$gateway, $redirector] = makeGateway($client, bootEcommerceListeners());
-
-    $order = orderAwaitingPayment();
-
-    $gateway->pay($order);
-    $first = $order->payment_id;
-
-    $gateway->pay($order);
-
-    expect($first)->toBe('tr_first');
-    expect($order->payment_id)->toBe('tr_second');
-    expect($redirector->sentTo)->toBe([
-        'https://pay.mollie.example/checkout/tr_first',
-        'https://pay.mollie.example/checkout/tr_second',
-    ]);
+    expect($order->getPaymentStatus())->toBe(PaymentStatus::Failed);
 });

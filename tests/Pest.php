@@ -2,15 +2,11 @@
 
 use Mollie\Api\MollieApiClient;
 use Oak\Config\Repository;
-use Oak\Contracts\Dispatcher\DispatcherInterface;
 use Oak\Dispatcher\Dispatcher;
-use Tests\Support\FakeRedirector;
 use Tests\Support\FixedMollieClientFactory;
 use Tests\Support\InMemoryOrder;
-use Tests\Support\NoopCartRelease;
-use Tests\Support\WebContainer;
-use Tnt\Ecommerce\Cart\CartRelease;
-use Tnt\Ecommerce\EcommerceServiceProvider;
+use Tests\Support\InMemoryPaymentLedger;
+use Tnt\Ecommerce\Payment\PaymentRedirect;
 use Tnt\Ecommerce\Payment\PaymentStatus;
 use Tnt\Mollie\Contracts\MollieClientFactoryInterface;
 use Tnt\Mollie\MolliePayment;
@@ -35,51 +31,18 @@ uses(Tests\TestCase::class)->in('Feature', 'Unit');
 */
 
 /**
- * dry-ecommerce booted for real, and the dispatcher its listeners are on.
- *
- * The idempotency this package leans on lives in those listeners — the
- * transition guard they write `payment_status` through — so the webhook
- * tests dispatch through them rather than asserting on dispatch calls.
- * Same arrangement as dry-ecommerce's own bootEcommerce(): the Paid
- * listener resolves CartRelease from the container, so a no-op release is
- * bound in its place.
- *
- * @return DispatcherInterface
- */
-function bootEcommerceListeners(): DispatcherInterface
-{
-    $app = new WebContainer();
-
-    $app->singleton(DispatcherInterface::class, Dispatcher::class);
-    $app->singleton(CartRelease::class, NoopCartRelease::class);
-
-    Oak\Facade::setContainer($app);
-
-    (new EcommerceServiceProvider())->boot($app);
-
-    /** @var DispatcherInterface $dispatcher */
-    $dispatcher = $app->get(DispatcherInterface::class);
-
-    return $dispatcher;
-}
-
-/**
- * The gateway under test, wired to a (mock) Mollie client and a redirector
- * that records instead of exiting. Config keys per docs/gateway.md.
+ * The gateway under test, wired to a (mock) Mollie client. Config keys per
+ * docs/gateway.md.
  *
  * A factory may be passed in place of a client, for the tests that need
  * the client's own construction to fail.
  *
  * @param MollieApiClient|MollieClientFactoryInterface $client
- * @param DispatcherInterface $dispatcher
- * @return array{MolliePayment, FakeRedirector}
+ * @return MolliePayment
  */
 function makeGateway(
-    MollieApiClient|MollieClientFactoryInterface $client,
-    DispatcherInterface $dispatcher
-): array {
-    $redirector = new FakeRedirector();
-
+    MollieApiClient|MollieClientFactoryInterface $client
+): MolliePayment {
     $config = new Repository([
         'mollie' => [
             'api_key' => 'test_dummy',
@@ -93,19 +56,26 @@ function makeGateway(
             ? new FixedMollieClientFactory($client)
             : $client;
 
-    $gateway = new MolliePayment($config, $factory, $dispatcher, $redirector);
-
-    return [$gateway, $redirector];
+    return new MolliePayment($config, $factory);
 }
 
 /**
- * A placed order awaiting its payment: pending, with a payment id when the
- * webhook needs to find it.
+ * dry-ecommerce's real ledger, writing to memory. Its events go to a
+ * dispatcher with no listeners: what the order reads is the point here.
  *
- * @param string|null $paymentId
+ * @return InMemoryPaymentLedger
+ */
+function makeLedger(): InMemoryPaymentLedger
+{
+    return new InMemoryPaymentLedger(new Dispatcher());
+}
+
+/**
+ * A placed order awaiting its payment.
+ *
  * @return InMemoryOrder
  */
-function orderAwaitingPayment(?string $paymentId = null): InMemoryOrder
+function orderAwaitingPayment(): InMemoryOrder
 {
     $order = new InMemoryOrder();
     $order->id = 7;
@@ -113,9 +83,31 @@ function orderAwaitingPayment(?string $paymentId = null): InMemoryOrder
     $order->total = 1250;
     $order->payment_status = PaymentStatus::Pending->value;
 
-    if ($paymentId !== null) {
-        $order->payment_id = $paymentId;
-    }
+    return $order;
+}
+
+/**
+ * An order whose Mollie payment was started, as `Cart::place()` records it —
+ * what the webhook finds the order through.
+ *
+ * @param InMemoryPaymentLedger $ledger
+ * @param string $paymentId
+ * @return InMemoryOrder
+ */
+function orderPayingWith(
+    InMemoryPaymentLedger $ledger,
+    string $paymentId
+): InMemoryOrder {
+    $order = orderAwaitingPayment();
+
+    $ledger->start(
+        $order,
+        'mollie',
+        new PaymentRedirect(
+            $paymentId,
+            'https://pay.mollie.example/checkout/' . $paymentId
+        )
+    );
 
     return $order;
 }
@@ -163,60 +155,80 @@ function molliePaymentBody(
 }
 
 /**
- * The same body once the money arrived — and optionally went back.
- *
- * Refunds and chargebacks are given as amounts, not flags, because that is
- * the only thing that tells a partial return from a full one. Each one adds
- * both the link Mollie hangs off the payment and the running total it keeps
- * beside it.
+ * The same body once the money arrived — and optionally went back, with
+ * the refunds and chargebacks embedded as `embed=refunds,chargebacks`
+ * serves them.
  *
  * @param string $id
- * @param string|null $refunded What has been refunded, e.g. '12.50'.
- * @param string|null $chargedBack What has been charged back, e.g. '12.50'.
+ * @param list<array<string, mixed>> $refunds From refund().
+ * @param list<array<string, mixed>> $chargebacks From chargeback().
  * @return array<string, mixed>
  */
 function paidMolliePaymentBody(
     string $id,
-    ?string $refunded = null,
-    ?string $chargedBack = null
+    array $refunds = [],
+    array $chargebacks = []
 ): array {
-    $links = [
-        'self' => [
-            'href' => 'https://api.mollie.com/v2/payments/' . $id,
-            'type' => 'application/hal+json',
+    $overrides = [
+        'paidAt' => '2026-09-01T10:05:00+00:00',
+        '_links' => [
+            'self' => [
+                'href' => 'https://api.mollie.com/v2/payments/' . $id,
+                'type' => 'application/hal+json',
+            ],
         ],
     ];
 
-    $overrides = [
-        'paidAt' => '2026-09-01T10:05:00+00:00',
-    ];
+    $embedded = array_filter([
+        'refunds' => $refunds,
+        'chargebacks' => $chargebacks,
+    ]);
 
-    if ($refunded !== null) {
-        $links['refunds'] = [
-            'href' => 'https://api.mollie.com/v2/payments/' . $id . '/refunds',
-            'type' => 'application/hal+json',
-        ];
-
-        $overrides['amountRefunded'] = [
-            'value' => $refunded,
-            'currency' => 'EUR',
-        ];
+    if ($embedded !== []) {
+        $overrides['_embedded'] = $embedded;
     }
-
-    if ($chargedBack !== null) {
-        $links['chargebacks'] = [
-            'href' =>
-                'https://api.mollie.com/v2/payments/' . $id . '/chargebacks',
-            'type' => 'application/hal+json',
-        ];
-
-        $overrides['amountChargedBack'] = [
-            'value' => $chargedBack,
-            'currency' => 'EUR',
-        ];
-    }
-
-    $overrides['_links'] = $links;
 
     return molliePaymentBody($id, 'paid', $overrides);
+}
+
+/**
+ * A Mollie refund resource body.
+ *
+ * @param string $id
+ * @param string $status
+ * @param string $amount
+ * @return array<string, mixed>
+ */
+function refund(string $id, string $status, string $amount): array
+{
+    return [
+        'resource' => 'refund',
+        'id' => $id,
+        'mode' => 'test',
+        'amount' => ['value' => $amount, 'currency' => 'EUR'],
+        'status' => $status,
+        'createdAt' => '2026-09-02T10:00:00+00:00',
+        'description' => 'Refund',
+        'paymentId' => 'tr_first',
+    ];
+}
+
+/**
+ * A Mollie chargeback resource body.
+ *
+ * @param string $id
+ * @param string $amount
+ * @param bool $reversed
+ * @return array<string, mixed>
+ */
+function chargeback(string $id, string $amount, bool $reversed = false): array
+{
+    return [
+        'resource' => 'chargeback',
+        'id' => $id,
+        'amount' => ['value' => $amount, 'currency' => 'EUR'],
+        'createdAt' => '2026-09-03T10:00:00+00:00',
+        'reversedAt' => $reversed ? '2026-09-10T10:00:00+00:00' : null,
+        'paymentId' => 'tr_first',
+    ];
 }

@@ -5,11 +5,11 @@
 |               |                                                 |
 | ------------- | ----------------------------------------------- |
 | PHP           | `>= 8.4`                                        |
-| dry-ecommerce | `^3.10` — the payment harness arrived in 3.10.0 |
+| dry-ecommerce | `^3.13` — the payment ledger (3.12.0) and its admin screen (3.13.0) |
 
 oak `^3` and dry `^4` arrive transitively through dry-ecommerce. Note the
 version numbering: dry-ecommerce's modern line (php 8.4, dry 4) is tagged
-`3.x` by its auto-release — `3.10` is a floor, not the old 3.x codebase.
+`3.x` by its auto-release — `3.13` is a floor, not the old 3.x codebase.
 
 ## Getting the package
 
