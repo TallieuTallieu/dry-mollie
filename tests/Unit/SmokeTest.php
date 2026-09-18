@@ -38,10 +38,7 @@ it('registers the client factory, and the client itself', function (): void {
 });
 
 it('assembles the gateway without reading the API key', function (): void {
-    // A key Mollie would refuse. The container must still be able to build
-    // the gateway from it: the key is only read when a payment is made, and
-    // that is what lets a bad one end as a failed attempt rather than as an
-    // exception thrown out of checkout.
+    // The key is only read in pay(), where a bad one ends as a failed attempt.
     $app = new Container();
 
     $app->set(

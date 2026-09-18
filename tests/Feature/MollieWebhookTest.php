@@ -45,9 +45,7 @@ it('maps every Mollie status onto the harness vocabulary', function (
         PaymentStatus::Pending,
     ],
     'paid' => [paidMolliePaymentBody('tr_first'), PaymentStatus::Paid],
-    // Refunded is terminal in dry-ecommerce, so only a full return earns
-    // it: a partial refund leaves the order paid, and re-placeable logic
-    // untouched.
+    // Refunded is terminal in dry-ecommerce, so only a full return earns it.
     'paid, fully refunded' => [
         paidMolliePaymentBody('tr_first', refunded: '12.50'),
         PaymentStatus::Refunded,
@@ -64,8 +62,7 @@ it('maps every Mollie status onto the harness vocabulary', function (
         paidMolliePaymentBody('tr_first', chargedBack: '1.00'),
         PaymentStatus::Paid,
     ],
-    // Refunds and chargebacks are both money going back; together they
-    // add up to the whole payment.
+    // Refunds and chargebacks add up.
     'paid, refunded and charged back to the full amount' => [
         paidMolliePaymentBody(
             'tr_first',
@@ -74,8 +71,7 @@ it('maps every Mollie status onto the harness vocabulary', function (
         ),
         PaymentStatus::Refunded,
     ],
-    // Mollie allows refunding over the payment, to reimburse a return
-    // shipment. Still everything back.
+    // Mollie allows refunding more, to reimburse return shipping.
     'paid, refunded over the payment' => [
         paidMolliePaymentBody('tr_first', refunded: '15.00'),
         PaymentStatus::Refunded,
@@ -202,9 +198,7 @@ it('still refunds after the money arrived', function (): void {
 });
 
 it('lets a Mollie failure out of statusOf', function (): void {
-    // The opposite of pay(): the webhook wants the failure, so the host can
-    // answer non-2xx and Mollie retries for hours. Swallowing it here would
-    // answer 200 to a question that was never asked.
+    // The webhook needs it to answer non-2xx, so Mollie retries.
     $client = new MockMollieClient([
         GetPaymentRequest::class => MockResponse::error(
             503,

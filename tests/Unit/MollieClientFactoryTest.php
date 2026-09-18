@@ -48,8 +48,7 @@ it('retries as often as the client does by default', function (): void {
 });
 
 it('lets the project set the retry budget', function (): void {
-    // A checkout has a visitor waiting on it: a project may prefer to fail
-    // fast over sitting out the default fifteen seconds.
+    // A checkout has a visitor waiting on it, so projects may fail faster.
     $factory = new MollieClientFactory(
         new Repository([
             'mollie' => [
@@ -67,8 +66,7 @@ it('lets the project set the retry budget', function (): void {
 });
 
 it('refuses a key that is not a Mollie key', function (): void {
-    // The throw pay() is built around: it happens when the client is made,
-    // not when the gateway is assembled.
+    // The throw happens when the client is made, not when it is injected.
     $factory = new MollieClientFactory(
         new Repository(['mollie' => ['api_key' => 'not-a-mollie-key']])
     );

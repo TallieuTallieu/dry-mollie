@@ -81,18 +81,12 @@ it('pays a zero total on the spot, like NullPayment', function (): void {
 it('reports a failed attempt however the payment fails', function (
     MockResponse|Closure $response
 ): void {
-    // Every one of these is a payment that never reached a checkout. The
-    // gateway must answer them all the same way, because the alternative
-    // is a throw out of pay() onto an error page — with the order already
-    // placed and the visitor's money untouched.
     $client = new MockMollieClient(
         [CreatePaymentRequest::class => $response],
-        // A dropped connection is retryable, and the real client would sit
-        // out its linear backoff before giving up. The test wants the
-        // giving up, not the waiting.
         retainRequests: true
     );
 
+    // Skip the backoff a dropped connection would otherwise sit out.
     $client->setRetryStrategy(new LinearRetryStrategy(maxRetries: 0));
 
     [$gateway, $redirector] = makeGateway($client, bootEcommerceListeners());
@@ -100,20 +94,17 @@ it('reports a failed attempt however the payment fails', function (
     $order = orderAwaitingPayment();
     $gateway->pay($order);
 
-    // Failed keeps the order re-placeable; the visitor stays in the shop
-    // with the basket still standing.
     expect($order->payment_status)->toBe('failed');
     expect($order->payment_id)->toBeNull();
     expect($redirector->sentTo)->toBe([]);
 })->with([
-    // ValidationException, under ApiException — Mollie answered, refusing.
+    // ValidationException, under ApiException.
     'Mollie refuses the payment' => fn() => MockResponse::unprocessableEntity(
         'The amount is higher than the maximum'
     ),
     // NotFoundException, under ApiException.
     'Mollie answers 404' => fn() => MockResponse::notFound(),
-    // ServiceUnavailableException, under ServerException — a sibling of
-    // ApiException, not a child of it.
+    // ServiceUnavailableException, under ServerException.
     'Mollie is down' => fn() => MockResponse::error(
         503,
         'Service Unavailable',
@@ -125,8 +116,7 @@ it('reports a failed attempt however the payment fails', function (
         'Request Timeout',
         'The request took too long'
     ),
-    // RetryableNetworkRequestException, under NetworkRequestException:
-    // the request never got an answer at all.
+    // RetryableNetworkRequestException, under NetworkRequestException.
     'the connection never lands' => fn() => fn(
         PendingRequest $request
     ): MockResponse => throw new NetworkFailure('Connection refused'),
@@ -135,9 +125,7 @@ it('reports a failed attempt however the payment fails', function (
 it(
     'reports a failed attempt when the API key is not usable',
     function (): void {
-        // The key is refused while the client is built, before any request
-        // — which is why the gateway builds it inside its own try rather
-        // than taking a finished client.
+        // The key is refused while the client is built, before any request.
         $factory = new MollieClientFactory(
             new Repository(['mollie' => ['api_key' => 'not-a-mollie-key']])
         );
@@ -159,9 +147,7 @@ it(
 it(
     'reports a failed attempt when the payment has no checkout',
     function (): void {
-        // A payment Mollie created but gave nowhere to pay: saving its id
-        // would leave the order waiting on a payment that can never be
-        // made, and blocked from being changed while it waits.
+        // Mollie created the payment but gave it no checkout link.
         $client = new MockMollieClient([
             CreatePaymentRequest::class => MockResponse::created(
                 molliePaymentBody('tr_first', 'open', [
@@ -191,10 +177,7 @@ it(
 );
 
 it('drops the old payment id when the retry fails', function (): void {
-    // Re-placement after a failure: the first attempt's id is still on the
-    // row. The second attempt fails, so there is no live payment — and no
-    // id either, or a late webhook for the dead one would speak for this
-    // order.
+    // A late webhook for the dead first payment must not speak for the order.
     $client = new MockMollieClient([
         CreatePaymentRequest::class => new SequenceMockResponse(
             MockResponse::created(molliePaymentBody('tr_first', 'open')),

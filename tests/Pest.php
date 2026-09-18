@@ -72,25 +72,20 @@ function bootEcommerceListeners(): DispatcherInterface
  *
  * @param MollieApiClient|MollieClientFactoryInterface $client
  * @param DispatcherInterface $dispatcher
- * @param array<string, mixed> $configOverrides
  * @return array{MolliePayment, FakeRedirector}
  */
 function makeGateway(
     MollieApiClient|MollieClientFactoryInterface $client,
-    DispatcherInterface $dispatcher,
-    array $configOverrides = []
+    DispatcherInterface $dispatcher
 ): array {
     $redirector = new FakeRedirector();
 
     $config = new Repository([
-        'mollie' => array_merge(
-            [
-                'api_key' => 'test_dummy',
-                'redirect_url' => 'https://shop.example/checkout/return/',
-                'webhook_url' => 'https://shop.example/mollie-webhook/',
-            ],
-            $configOverrides
-        ),
+        'mollie' => [
+            'api_key' => 'test_dummy',
+            'redirect_url' => 'https://shop.example/checkout/return/',
+            'webhook_url' => 'https://shop.example/mollie-webhook/',
+        ],
     ]);
 
     $factory =

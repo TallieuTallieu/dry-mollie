@@ -64,9 +64,7 @@ class MolliePayment implements PaymentGatewayInterface
         }
 
         try {
-            // Built here, not injected: a missing or malformed API key
-            // throws while the client is built, and that failure belongs
-            // in this block with the rest.
+            // Built here, not injected, so a bad API key fails inside this try.
             $mollie = $this->clients->make();
 
             $molliePayment = $mollie->payments->create([
@@ -81,12 +79,7 @@ class MolliePayment implements PaymentGatewayInterface
                 'webhookUrl' => $this->configuredUrl('mollie.webhook_url'),
             ]);
         } catch (MollieException) {
-            // MollieException is the root of the lot: a refusal from the
-            // API, a network failure, a timeout, a Mollie outage, a bad
-            // key. None of them got the visitor to a checkout, so all of
-            // them are the same failed attempt. Anything narrower would
-            // throw out of pay() onto an error page, leaving a placed,
-            // unpaid order behind.
+            // The root of every Mollie failure; see docs/gateway.md.
             $this->reportAFailedAttempt($order);
 
             return;
@@ -95,10 +88,7 @@ class MolliePayment implements PaymentGatewayInterface
         $checkoutUrl = $molliePayment->getCheckoutUrl();
 
         if ($checkoutUrl === null) {
-            // A payment with nowhere to send the visitor is a dead end:
-            // saving its id would leave the order waiting on a payment
-            // that can never be made. Treat it as the failed attempt it
-            // is, and let the visitor try again.
+            // Nowhere to send the visitor: as dead as a refused payment.
             $this->reportAFailedAttempt($order);
 
             return;

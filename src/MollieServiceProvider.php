@@ -36,9 +36,7 @@ class MollieServiceProvider extends ServiceProvider
             MollieClientFactory::class
         );
 
-        // Kept for project code that asks for the client itself. Resolving
-        // it throws on a malformed API key, which is why the gateway goes
-        // through the factory instead.
+        // For project code; resolving it throws on a malformed API key.
         $app->set(MollieApiClient::class, function (
             ContainerInterface $container
         ): MollieApiClient {
