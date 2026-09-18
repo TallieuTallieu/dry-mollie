@@ -2,9 +2,9 @@
 
 ## Requirements
 
-|               |                                              |
-| ------------- | -------------------------------------------- |
-| PHP           | `>= 8.4`                                     |
+|               |                                                 |
+| ------------- | ----------------------------------------------- |
+| PHP           | `>= 8.4`                                        |
 | dry-ecommerce | `^3.10` — the payment harness arrived in 3.10.0 |
 
 oak `^3` and dry `^4` arrive transitively through dry-ecommerce. Note the

@@ -221,7 +221,9 @@ references.
   so tunnel your local environment or test webhooks on staging.
 - The package's own suite runs against Mollie's mock client
   (`Mollie\Api\Fake\MockMollieClient`) — no network, no key. Copy that
-  arrangement for project-level tests.
+  arrangement for project-level tests: the gateway asks
+  `MollieClientFactoryInterface` for its client, so bind a factory that
+  hands out the mock (see `tests/Support/FixedMollieClientFactory.php`).
 
 ## See also
 
