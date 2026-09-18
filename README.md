@@ -15,7 +15,7 @@ composer require tallieutallieu/dry-mollie
 ```
 
 with the VCS repositories configured — dry-mollie and dry-ecommerce
-(`^3.12`, the release that ships the payment ledger) from GitHub, dry
+(`^3.13`, with the payment ledger and its admin screen) from GitHub, dry
 from Bitbucket.
 
 ## Wiring

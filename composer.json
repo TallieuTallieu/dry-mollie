@@ -7,7 +7,7 @@
   "require": {
     "php": ">=8.4",
     "mollie/mollie-api-php": "^3.13",
-    "tallieutallieu/dry-ecommerce": "^3.12"
+    "tallieutallieu/dry-ecommerce": "^3.13"
   },
   "require-dev": {
     "pestphp/pest": "^3.8",
