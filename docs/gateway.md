@@ -26,7 +26,7 @@ it: the entries a shop already has would be orphaned.
 - **`pay($order)`** creates the Mollie payment and answers with a
   `PaymentOutcome`. The payment gets the amount from the order's integer
   cents (`Money::toDecimal()`), the order reference as description, and
-  the configured return and webhook URLs.
+  the configured return, webhook and — when set — cancel URLs.
 
     | What happened                            | `pay()` answers                             |
     | ---------------------------------------- | ------------------------------------------- |
@@ -150,6 +150,11 @@ return [
     // &order=<id> when the URL already carries a query.
     'redirect_url' => \dry\abs_url('checkout/return/'),
 
+    // Optional: where a visitor who cancels on Mollie's checkout lands,
+    // ?order=<id> appended the same way. Left out, Mollie sends them to
+    // redirect_url. See the return page below.
+    'cancel_url' => \dry\abs_url('cart/'),
+
     // The one webhook route (below), as Mollie must reach it from
     // outside. On a local environment this needs a tunnel — Mollie
     // cannot post to localhost.
@@ -249,6 +254,11 @@ match ($order->getPaymentStatus()) {
 The `order` parameter identifies, it does not authenticate — decide there
 who may see the order, exactly as dry-ecommerce's docs say about
 references.
+
+A configured `cancel_url` is a second such page, under the same rules.
+Landing there says the visitor clicked cancel, not that the payment is
+canceled: the webhook may not have arrived yet, so the order can still
+read pending. Read the order's state there too.
 
 ## Test mode
 

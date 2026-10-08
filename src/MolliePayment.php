@@ -91,6 +91,7 @@ class MolliePayment implements PaymentGatewayInterface
                 'description' => (string) $order->order_id,
                 'redirectUrl' => $this->returnUrl($order),
                 'webhookUrl' => $this->configuredUrl('mollie.webhook_url'),
+                ...$this->cancelUrl($order),
             ]);
         } catch (MollieException) {
             // The root of every Mollie failure; see docs/gateway.md.
@@ -287,8 +288,38 @@ class MolliePayment implements PaymentGatewayInterface
      */
     private function returnUrl(Order $order): string
     {
-        $url = $this->configuredUrl('mollie.redirect_url');
+        return $this->withOrder(
+            $this->configuredUrl('mollie.redirect_url'),
+            $order
+        );
+    }
 
+    /**
+     * The configured cancel page, as the return page has it, or nothing:
+     * left out, Mollie sends a visitor who cancels to the return page.
+     * Either way the webhook, not the page, decides the payment's state.
+     *
+     * @param Order $order
+     * @return array{cancelUrl?: string}
+     */
+    private function cancelUrl(Order $order): array
+    {
+        $url = $this->configuredUrl('mollie.cancel_url');
+
+        return $url === ''
+            ? []
+            : ['cancelUrl' => $this->withOrder($url, $order)];
+    }
+
+    /**
+     * A URL with the order appended as `order=`.
+     *
+     * @param string $url
+     * @param Order $order
+     * @return string
+     */
+    private function withOrder(string $url, Order $order): string
+    {
         return $url .
             (str_contains($url, '?') ? '&' : '?') .
             'order=' .

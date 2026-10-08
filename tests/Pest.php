@@ -38,17 +38,23 @@ uses(Tests\TestCase::class)->in('Feature', 'Unit');
  * the client's own construction to fail.
  *
  * @param MollieApiClient|MollieClientFactoryInterface $client
+ * @param array<string, mixed> $mollie Config keys added to or replacing
+ *     the defaults.
  * @return MolliePayment
  */
 function makeGateway(
-    MollieApiClient|MollieClientFactoryInterface $client
+    MollieApiClient|MollieClientFactoryInterface $client,
+    array $mollie = []
 ): MolliePayment {
     $config = new Repository([
-        'mollie' => [
-            'api_key' => 'test_dummy',
-            'redirect_url' => 'https://shop.example/checkout/return/',
-            'webhook_url' => 'https://shop.example/mollie-webhook/',
-        ],
+        'mollie' => array_merge(
+            [
+                'api_key' => 'test_dummy',
+                'redirect_url' => 'https://shop.example/checkout/return/',
+                'webhook_url' => 'https://shop.example/mollie-webhook/',
+            ],
+            $mollie
+        ),
     ]);
 
     $factory =
