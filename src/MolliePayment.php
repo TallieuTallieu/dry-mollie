@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tnt\Mollie;
 
 use Mollie\Api\Exceptions\MollieException;
+use Mollie\Api\Http\Data\Money as MollieMoney;
 use Mollie\Api\Resources\Chargeback;
 use Mollie\Api\Resources\Payment;
 use Mollie\Api\Resources\Refund;
@@ -263,19 +264,17 @@ class MolliePayment implements PaymentGatewayInterface
     }
 
     /**
-     * A Mollie amount object read as integer cents — the package's money.
+     * A Mollie amount read as integer cents — the package's money.
      * Absent amounts (Mollie omits the zero ones) read as nothing.
      *
-     * @param \stdClass|null $amount
+     * @param MollieMoney|null $amount
      * @return int
      *
      * @throws \Tnt\Ecommerce\NotAnAmount If the value is not an exact amount.
      */
-    private function cents(?\stdClass $amount): int
+    private function cents(?MollieMoney $amount): int
     {
-        $value = $amount->value ?? null;
-
-        return is_string($value) ? Money::fromDecimal($value) : 0;
+        return $amount === null ? 0 : Money::fromDecimal($amount->value);
     }
 
     /**

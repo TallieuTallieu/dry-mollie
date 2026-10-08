@@ -57,7 +57,7 @@ it: the entries a shop already has would be orphaned.
     | The API key is missing or malformed       | `InvalidAuthenticationException`                             |
 
     The catch is on `MollieException`, the root of every class in that
-    column — not on `ApiException`, which in `mollie-api-php` v3 means only
+    column — not on `ApiException`, which in `mollie-api-php` v4 means only
     "the API answered with an error", and so covers the first row alone.
     None of them may escape: a refusal is an outcome, and a throw out of
     `pay()` would leave a placed order pending with nobody on the way to
