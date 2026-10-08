@@ -1,5 +1,9 @@
 <?php
 
+use Mollie\Api\Fake\MockMollieClient;
+use Mollie\Api\Fake\MockResponse;
+use Mollie\Api\Http\PendingRequest;
+use Mollie\Api\Http\Requests\CreatePaymentRequest;
 use Mollie\Api\MollieApiClient;
 use Oak\Config\Repository;
 use Oak\Dispatcher\Dispatcher;
@@ -63,6 +67,54 @@ function makeGateway(
             : $client;
 
     return new MolliePayment($config, $factory);
+}
+
+/**
+ * What pay() sent Mollie to create the payment, with these config keys on
+ * top of makeGateway()'s.
+ *
+ * @param array<string, mixed> $mollie
+ * @param InMemoryOrder|null $order Defaults to orderAwaitingPayment().
+ * @return array<string, mixed>
+ */
+function createdPaymentPayload(
+    array $mollie = [],
+    ?InMemoryOrder $order = null
+): array {
+    $client = new MockMollieClient([
+        CreatePaymentRequest::class => MockResponse::created(
+            molliePaymentBody('tr_first', 'open')
+        ),
+    ]);
+
+    makeGateway($client, $mollie)->pay($order ?? orderAwaitingPayment());
+
+    $sent = [];
+
+    $client->assertSent(function (PendingRequest $request) use (&$sent): bool {
+        $payload = $request->payload()?->all();
+        $sent = is_array($payload) ? $payload : [];
+
+        return true;
+    });
+
+    // The SDK hands value objects through; compare plain arrays.
+    $plain = json_decode((string) json_encode($sent), true);
+
+    return is_array($plain) ? $plain : [];
+}
+
+/**
+ * The billing address pay() sent Mollie for this order, or [] for none.
+ *
+ * @param InMemoryOrder $order
+ * @return array<string, mixed>
+ */
+function sentBillingAddress(InMemoryOrder $order): array
+{
+    $address = createdPaymentPayload([], $order)['billingAddress'] ?? [];
+
+    return is_array($address) ? $address : [];
 }
 
 /**

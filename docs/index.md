@@ -19,6 +19,8 @@ provider package copies.
 | `redirect_url`     | The return page; the gateway appends `order=<id>`       |
 | `cancel_url`       | Optional; the cancel page, `order=<id>` appended too    |
 | `webhook_url`      | The project's one webhook route, as Mollie reaches it   |
+| `locale`           | Optional; checkout language, or a page-language map     |
+| `methods`          | Optional; the payment method, or list of them, offered  |
 | `retries`          | Optional; retries on a dropped connection (default `5`) |
 | `retry_delay_ms`   | Optional; the linear backoff step (default `1000`)      |
 

@@ -26,7 +26,10 @@ it: the entries a shop already has would be orphaned.
 - **`pay($order)`** creates the Mollie payment and answers with a
   `PaymentOutcome`. The payment gets the amount from the order's integer
   cents (`Money::toDecimal()`), the order reference as description, and
-  the configured return, webhook and — when set — cancel URLs.
+  the configured return, webhook and — when set — cancel URLs. It also
+  tells Mollie's checkout the order's id and reference (as `metadata`),
+  who pays, and — when configured — the language and payment methods; see
+  [Checkout options](#checkout-options).
 
     | What happened                            | `pay()` answers                             |
     | ---------------------------------------- | ------------------------------------------- |
@@ -160,6 +163,13 @@ return [
     // cannot post to localhost.
     'webhook_url' => \dry\abs_url('mollie-webhook/'),
 
+    // Optional; see Checkout options below. One Mollie locale, or a map
+    // from the page language to one.
+    'locale' => ['nl' => 'nl_BE', 'fr' => 'fr_BE', 'en' => 'en_GB'],
+
+    // Optional; see Checkout options below. One method, or a list.
+    'methods' => ['bancontact', 'creditcard', 'ideal'],
+
     // Optional; see Retries below. These are the defaults.
     'retries' => 5,
     'retry_delay_ms' => 1000,
@@ -182,6 +192,38 @@ itself; dry-ecommerce's provider sees the gateway implements
 Note that resolving `MollieApiClient` from the container is what validates
 the key, so a bad one throws there — the gateway goes through the factory
 precisely to keep that throw inside `pay()`.
+
+#### Checkout options
+
+What Mollie's checkout page shows. All of it is optional, and none of it
+may cost the payment: a value Mollie would refuse is left out rather than
+sent, so a typo falls back to Mollie's default instead of refusing every
+checkout.
+
+- **`locale`** — the checkout's language. One Mollie locale (`'nl_BE'`),
+  or a map from the page language (`\dry\http\Response::$language`) to
+  one, for a site in several languages. Mollie only takes its own list —
+  `nl_BE`, not `nl` or `nl-BE`; see `MolliePayment::LOCALES`. Unset, not
+  in the map, or not on that list: no locale is sent and Mollie goes by
+  the browser.
+- **`methods`** — the payment methods on offer. One method (`'bancontact'`)
+  sends the visitor straight to it, skipping Mollie's selection screen; a
+  list narrows the selection to those. Unset: every method the Mollie
+  profile has enabled. These are **not** checked: which methods exist is
+  the profile's business, so test the list against the profile, as a
+  method it has not enabled can make Mollie refuse the payment.
+
+Two more go along on every payment, with nothing to configure:
+
+- **`metadata`** — the order's row id and reference, so a payment in
+  Mollie's dashboard leads back to its order.
+- **`billingAddress`** — who pays, from what the order froze: first and
+  last name, company, email and the billing address. Mollie prefills its
+  checkout with it, and bank transfer mails its payment instructions to
+  the email. Each field goes only if Mollie would take it (names of two
+  characters or more, a valid email, a whole address with an ISO 3166-1
+  alpha-2 country such as `BE`); the address goes only with an email or a
+  whole postal address, because Mollie refuses one with neither.
 
 #### Retries
 
