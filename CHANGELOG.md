@@ -5,6 +5,12 @@ follow [Semantic Versioning](https://semver.org). New entries are generated from
 commit messages by [dry-ci](https://github.com/TallieuTallieu/dry-ci); past
 entries may be edited by hand.
 
+## 6.0.0 - 2026-10-09
+
+### Breaking changes
+
+- Mollie-api-php v4 and checkout options [sc-11756](https://app.shortcut.com/tallieu--tallieu/story/11756)
+
 ## 5.0.3 - 2026-09-28
 
 ### Other changes
