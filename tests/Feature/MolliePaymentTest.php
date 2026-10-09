@@ -68,6 +68,47 @@ it('creates the Mollie payment from the frozen order', function (): void {
     expect($order->payment_id)->toBeNull();
 });
 
+it(
+    'leaves the cancel url to Mollie when none is configured',
+    function (): void {
+        // Mollie then sends a visitor who cancels to the return page.
+        $client = new MockMollieClient([
+            CreatePaymentRequest::class => MockResponse::created(
+                molliePaymentBody('tr_first', 'open')
+            ),
+        ]);
+
+        makeGateway($client)->pay(orderAwaitingPayment());
+
+        $client->assertSent(function (PendingRequest $request): bool {
+            $payload = $request->payload()?->all();
+
+            return is_array($payload) &&
+                !array_key_exists('cancelUrl', $payload);
+        });
+    }
+);
+
+it('sends the configured cancel url with the order', function (): void {
+    $client = new MockMollieClient([
+        CreatePaymentRequest::class => MockResponse::created(
+            molliePaymentBody('tr_first', 'open')
+        ),
+    ]);
+
+    makeGateway($client, [
+        'cancel_url' => 'https://shop.example/cart/?from=mollie',
+    ])->pay(orderAwaitingPayment());
+
+    $client->assertSent(function (PendingRequest $request): bool {
+        $payload = $request->payload()?->all();
+
+        return is_array($payload) &&
+            ($payload['cancelUrl'] ?? null) ===
+                'https://shop.example/cart/?from=mollie&order=7';
+    });
+});
+
 it('settles a zero total on the spot, like NullPayment', function (): void {
     // No expected responses: any API call would fail the test loudly.
     $gateway = makeGateway(new MockMollieClient([]));

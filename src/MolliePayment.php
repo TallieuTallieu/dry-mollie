@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tnt\Mollie;
 
 use Mollie\Api\Exceptions\MollieException;
+use Mollie\Api\Http\Data\Money as MollieMoney;
 use Mollie\Api\Resources\Chargeback;
 use Mollie\Api\Resources\Payment;
 use Mollie\Api\Resources\Refund;
@@ -37,6 +38,46 @@ class MolliePayment implements PaymentGatewayInterface
      * entries a shop already has would be orphaned.
      */
     private const PROVIDER = 'mollie';
+
+    /**
+     * The checkout languages Mollie accepts. A locale outside this list
+     * would make Mollie refuse the payment, so it is never sent.
+     *
+     * @see https://docs.mollie.com/reference/create-payment
+     */
+    public const LOCALES = [
+        'ca_ES',
+        'cs_CZ',
+        'da_DK',
+        'de_AT',
+        'de_CH',
+        'de_DE',
+        'de_LU',
+        'el_GR',
+        'en_BE',
+        'en_GB',
+        'en_NL',
+        'en_US',
+        'es_ES',
+        'fi_FI',
+        'fr_BE',
+        'fr_FR',
+        'fr_LU',
+        'hu_HU',
+        'is_IS',
+        'it_IT',
+        'lt_LT',
+        'lv_LV',
+        'nb_NO',
+        'nl_BE',
+        'nl_NL',
+        'pl_PL',
+        'pt_PT',
+        'sk_SK',
+        'sl_SI',
+        'sv_SE',
+        'tr_TR',
+    ];
 
     /**
      * @param RepositoryInterface $config
@@ -90,6 +131,14 @@ class MolliePayment implements PaymentGatewayInterface
                 'description' => (string) $order->order_id,
                 'redirectUrl' => $this->returnUrl($order),
                 'webhookUrl' => $this->configuredUrl('mollie.webhook_url'),
+                'metadata' => [
+                    'order_id' => (int) $order->id,
+                    'reference' => (string) $order->order_id,
+                ],
+                ...$this->cancelUrl($order),
+                ...$this->locale(),
+                ...$this->methods(),
+                ...$this->billingAddress($order),
             ]);
         } catch (MollieException) {
             // The root of every Mollie failure; see docs/gateway.md.
@@ -263,19 +312,17 @@ class MolliePayment implements PaymentGatewayInterface
     }
 
     /**
-     * A Mollie amount object read as integer cents — the package's money.
+     * A Mollie amount read as integer cents — the package's money.
      * Absent amounts (Mollie omits the zero ones) read as nothing.
      *
-     * @param \stdClass|null $amount
+     * @param MollieMoney|null $amount
      * @return int
      *
      * @throws \Tnt\Ecommerce\NotAnAmount If the value is not an exact amount.
      */
-    private function cents(?\stdClass $amount): int
+    private function cents(?MollieMoney $amount): int
     {
-        $value = $amount->value ?? null;
-
-        return is_string($value) ? Money::fromDecimal($value) : 0;
+        return $amount === null ? 0 : Money::fromDecimal($amount->value);
     }
 
     /**
@@ -288,8 +335,173 @@ class MolliePayment implements PaymentGatewayInterface
      */
     private function returnUrl(Order $order): string
     {
-        $url = $this->configuredUrl('mollie.redirect_url');
+        return $this->withOrder(
+            $this->configuredUrl('mollie.redirect_url'),
+            $order
+        );
+    }
 
+    /**
+     * The configured cancel page, as the return page has it, or nothing:
+     * left out, Mollie sends a visitor who cancels to the return page.
+     * Either way the webhook, not the page, decides the payment's state.
+     *
+     * @param Order $order
+     * @return array{cancelUrl?: string}
+     */
+    private function cancelUrl(Order $order): array
+    {
+        $url = $this->configuredUrl('mollie.cancel_url');
+
+        return $url === ''
+            ? []
+            : ['cancelUrl' => $this->withOrder($url, $order)];
+    }
+
+    /**
+     * The configured checkout language, or nothing: left out, Mollie goes by
+     * the browser. `mollie.locale` is one locale, or a map from the page's
+     * language (`Response::$language`) to one. Anything Mollie would refuse
+     * is left out too — a wrong locale must not cost the payment.
+     *
+     * @return array{locale?: string}
+     */
+    private function locale(): array
+    {
+        $configured = $this->config->get('mollie.locale');
+
+        $locale = is_array($configured)
+            ? $configured[(string) \dry\http\Response::$language] ?? null
+            : $configured;
+
+        return in_array($locale, self::LOCALES, true)
+            ? ['locale' => $locale]
+            : [];
+    }
+
+    /**
+     * The configured payment methods, or nothing: left out, Mollie offers
+     * every method the profile has enabled. One method skips Mollie's
+     * selection screen; a list narrows it. Not checked against Mollie's
+     * vocabulary — which methods exist is the profile's business.
+     *
+     * @return array{method?: string|list<string>}
+     */
+    private function methods(): array
+    {
+        $configured = $this->config->get('mollie.methods');
+
+        if (is_string($configured)) {
+            $configured = [$configured];
+        }
+
+        if (!is_array($configured)) {
+            return [];
+        }
+
+        $methods = array_values(
+            array_filter(
+                $configured,
+                fn($method): bool => is_string($method) && $method !== ''
+            )
+        );
+
+        return match (count($methods)) {
+            0 => [],
+            1 => ['method' => $methods[0]],
+            default => ['method' => $methods],
+        };
+    }
+
+    /**
+     * The order's frozen identity and billing address, so Mollie's checkout
+     * knows who pays — bank transfer mails its instructions to the email.
+     * Each field goes only if Mollie would take it, and the address only
+     * with what Mollie requires of one: an email, or a whole postal address.
+     * A badly typed order must not cost the payment.
+     *
+     * @param Order $order
+     * @return array{billingAddress?: array<string, string>}
+     */
+    private function billingAddress(Order $order): array
+    {
+        $address = array_filter(
+            [
+                'givenName' => $this->personName($order->getFirstName()),
+                'familyName' => $this->personName($order->getLastName()),
+                'organizationName' => trim($order->getCompanyName()),
+                'email' => filter_var(
+                    trim($order->getEmail()),
+                    FILTER_VALIDATE_EMAIL
+                ),
+                ...$this->postalAddress($order),
+            ],
+            fn($value): bool => is_string($value) && $value !== ''
+        );
+
+        $complete =
+            isset($address['email']) || isset($address['streetAndNumber']);
+
+        return $complete ? ['billingAddress' => $address] : [];
+    }
+
+    /**
+     * The billing address in Mollie's fields, or nothing unless it is
+     * whole: street, postal code, city and an ISO 3166-1 alpha-2 country.
+     *
+     * @param Order $order
+     * @return array<string, string>
+     */
+    private function postalAddress(Order $order): array
+    {
+        $billing = $order->getBillingAddress();
+
+        $street = trim($billing->getStreet() . ' ' . $billing->getNumber());
+        $postalCode = trim($billing->getPostalCode());
+        $city = trim($billing->getCity());
+        $country = strtoupper(trim($billing->getCountry()));
+
+        if (
+            $street === '' ||
+            $postalCode === '' ||
+            $city === '' ||
+            preg_match('/^[A-Z]{2}$/', $country) !== 1
+        ) {
+            return [];
+        }
+
+        return [
+            'streetAndNumber' => $street,
+            'streetAdditional' => trim($billing->getBox()),
+            'postalCode' => $postalCode,
+            'city' => $city,
+            'country' => $country,
+        ];
+    }
+
+    /**
+     * A name as Mollie takes one — two characters at least, not only
+     * digits — or ''.
+     *
+     * @param string $name
+     * @return string
+     */
+    private function personName(string $name): string
+    {
+        $name = trim($name);
+
+        return mb_strlen($name) >= 2 && !ctype_digit($name) ? $name : '';
+    }
+
+    /**
+     * A URL with the order appended as `order=`.
+     *
+     * @param string $url
+     * @param Order $order
+     * @return string
+     */
+    private function withOrder(string $url, Order $order): string
+    {
         return $url .
             (str_contains($url, '?') ? '&' : '?') .
             'order=' .

@@ -26,7 +26,10 @@ it: the entries a shop already has would be orphaned.
 - **`pay($order)`** creates the Mollie payment and answers with a
   `PaymentOutcome`. The payment gets the amount from the order's integer
   cents (`Money::toDecimal()`), the order reference as description, and
-  the configured return and webhook URLs.
+  the configured return, webhook and — when set — cancel URLs. It also
+  tells Mollie's checkout the order's id and reference (as `metadata`),
+  who pays, and — when configured — the language and payment methods; see
+  [Checkout options](#checkout-options).
 
     | What happened                             | `pay()` answers                      |
     | ----------------------------------------- | ------------------------------------ |
@@ -57,7 +60,7 @@ it: the entries a shop already has would be orphaned.
     | The API key is missing or malformed | `InvalidAuthenticationException`                             |
 
     The catch is on `MollieException`, the root of every class in that
-    column — not on `ApiException`, which in `mollie-api-php` v3 means only
+    column — not on `ApiException`, which in `mollie-api-php` v4 means only
     "the API answered with an error", and so covers the first row alone.
     None of them may escape: a refusal is an outcome, and a throw out of
     `pay()` would leave a placed order pending with nobody on the way to
@@ -150,10 +153,22 @@ return [
     // &order=<id> when the URL already carries a query.
     'redirect_url' => \dry\abs_url('checkout/return/'),
 
+    // Optional: where a visitor who cancels on Mollie's checkout lands,
+    // ?order=<id> appended the same way. Left out, Mollie sends them to
+    // redirect_url. See the return page below.
+    'cancel_url' => \dry\abs_url('cart/'),
+
     // The one webhook route (below), as Mollie must reach it from
     // outside. On a local environment this needs a tunnel — Mollie
     // cannot post to localhost.
     'webhook_url' => \dry\abs_url('mollie-webhook/'),
+
+    // Optional; see Checkout options below. One Mollie locale, or a map
+    // from the page language to one.
+    'locale' => ['nl' => 'nl_BE', 'fr' => 'fr_BE', 'en' => 'en_GB'],
+
+    // Optional; see Checkout options below. One method, or a list.
+    'methods' => ['bancontact', 'creditcard', 'ideal'],
 
     // Optional; see Retries below. These are the defaults.
     'retries' => 5,
@@ -177,6 +192,38 @@ itself; dry-ecommerce's provider sees the gateway implements
 Note that resolving `MollieApiClient` from the container is what validates
 the key, so a bad one throws there — the gateway goes through the factory
 precisely to keep that throw inside `pay()`.
+
+#### Checkout options
+
+What Mollie's checkout page shows. All of it is optional, and none of it
+may cost the payment: a value Mollie would refuse is left out rather than
+sent, so a typo falls back to Mollie's default instead of refusing every
+checkout.
+
+- **`locale`** — the checkout's language. One Mollie locale (`'nl_BE'`),
+  or a map from the page language (`\dry\http\Response::$language`) to
+  one, for a site in several languages. Mollie only takes its own list —
+  `nl_BE`, not `nl` or `nl-BE`; see `MolliePayment::LOCALES`. Unset, not
+  in the map, or not on that list: no locale is sent and Mollie goes by
+  the browser.
+- **`methods`** — the payment methods on offer. One method (`'bancontact'`)
+  sends the visitor straight to it, skipping Mollie's selection screen; a
+  list narrows the selection to those. Unset: every method the Mollie
+  profile has enabled. These are **not** checked: which methods exist is
+  the profile's business, so test the list against the profile, as a
+  method it has not enabled can make Mollie refuse the payment.
+
+Two more go along on every payment, with nothing to configure:
+
+- **`metadata`** — the order's row id and reference, so a payment in
+  Mollie's dashboard leads back to its order.
+- **`billingAddress`** — who pays, from what the order froze: first and
+  last name, company, email and the billing address. Mollie prefills its
+  checkout with it, and bank transfer mails its payment instructions to
+  the email. Each field goes only if Mollie would take it (names of two
+  characters or more, a valid email, a whole address with an ISO 3166-1
+  alpha-2 country such as `BE`); the address goes only with an email or a
+  whole postal address, because Mollie refuses one with neither.
 
 #### Retries
 
@@ -249,6 +296,11 @@ match ($order->getPaymentStatus()) {
 The `order` parameter identifies, it does not authenticate — decide there
 who may see the order, exactly as dry-ecommerce's docs say about
 references.
+
+A configured `cancel_url` is a second such page, under the same rules.
+Landing there says the visitor clicked cancel, not that the payment is
+canceled: the webhook may not have arrived yet, so the order can still
+read pending. Read the order's state there too.
 
 ## Test mode
 
