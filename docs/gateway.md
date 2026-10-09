@@ -31,12 +31,12 @@ it: the entries a shop already has would be orphaned.
   who pays, and — when configured — the language and payment methods; see
   [Checkout options](#checkout-options).
 
-    | What happened                            | `pay()` answers                             |
-    | ---------------------------------------- | ------------------------------------------- |
-    | Mollie created a payment with a checkout | `PaymentRedirect($id, $checkoutUrl)`        |
-    | The order total is zero                  | `PaymentSettled` (below)                    |
-    | Mollie created a payment with no checkout | `PaymentRefused($id)`                      |
-    | Anything that threw a `MollieException`  | `PaymentRefused()`                          |
+    | What happened                             | `pay()` answers                      |
+    | ----------------------------------------- | ------------------------------------ |
+    | Mollie created a payment with a checkout  | `PaymentRedirect($id, $checkoutUrl)` |
+    | The order total is zero                   | `PaymentSettled` (below)             |
+    | Mollie created a payment with no checkout | `PaymentRefused($id)`                |
+    | Anything that threw a `MollieException`   | `PaymentRefused()`                   |
 
     On a redirect, the package records the attempt, points `payment_id` at
     it and sends the visitor to Mollie. On a refusal, the order reads
@@ -51,13 +51,13 @@ it: the entries a shop already has would be orphaned.
 
     Every failure to create the payment is refused the same way:
 
-    | What went wrong                           | Mollie's exception                                           |
-    | ----------------------------------------- | ------------------------------------------------------------ |
-    | Mollie refuses the payment (4xx)          | `ValidationException`, `NotFoundException`, … `ApiException` |
-    | Mollie is down (503)                      | `ServiceUnavailableException` → `ServerException`            |
-    | The request times out (408)               | `RequestTimeoutException` → `NetworkRequestException`        |
-    | The connection never lands                | `RetryableNetworkRequestException`                           |
-    | The API key is missing or malformed       | `InvalidAuthenticationException`                             |
+    | What went wrong                     | Mollie's exception                                           |
+    | ----------------------------------- | ------------------------------------------------------------ |
+    | Mollie refuses the payment (4xx)    | `ValidationException`, `NotFoundException`, … `ApiException` |
+    | Mollie is down (503)                | `ServiceUnavailableException` → `ServerException`            |
+    | The request times out (408)         | `RequestTimeoutException` → `NetworkRequestException`        |
+    | The connection never lands          | `RetryableNetworkRequestException`                           |
+    | The API key is missing or malformed | `InvalidAuthenticationException`                             |
 
     The catch is on `MollieException`, the root of every class in that
     column — not on `ApiException`, which in `mollie-api-php` v4 means only
