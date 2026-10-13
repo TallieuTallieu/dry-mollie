@@ -69,9 +69,8 @@ it('creates the Mollie payment from the frozen order', function (): void {
 });
 
 it(
-    'leaves the cancel url to Mollie when none is configured',
+    'cancels to the return page, marked, when no cancel url is configured',
     function (): void {
-        // Mollie then sends a visitor who cancels to the return page.
         $client = new MockMollieClient([
             CreatePaymentRequest::class => MockResponse::created(
                 molliePaymentBody('tr_first', 'open')
@@ -84,7 +83,8 @@ it(
             $payload = $request->payload()?->all();
 
             return is_array($payload) &&
-                !array_key_exists('cancelUrl', $payload);
+                ($payload['cancelUrl'] ?? null) ===
+                    'https://shop.example/checkout/return/?order=7&canceled=1';
         });
     }
 );

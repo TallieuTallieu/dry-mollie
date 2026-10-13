@@ -26,9 +26,9 @@ it: the entries a shop already has would be orphaned.
 - **`pay($order)`** creates the Mollie payment and answers with a
   `PaymentOutcome`. The payment gets the amount from the order's integer
   cents (`Money::toDecimal()`), the order reference as description, and
-  the configured return, webhook and — when set — cancel URLs. It also
-  tells Mollie's checkout the order's id and reference (as `metadata`),
-  who pays, and — when configured — the language and payment methods; see
+  the configured return, webhook and cancel URLs. It also tells
+  Mollie's checkout the order's id and reference (as `metadata`), who
+  pays, and — when configured — the language and payment methods; see
   [Checkout options](#checkout-options).
 
     | What happened                             | `pay()` answers                      |
@@ -154,8 +154,8 @@ return [
     'redirect_url' => \dry\abs_url('checkout/return/'),
 
     // Optional: where a visitor who cancels on Mollie's checkout lands,
-    // ?order=<id> appended the same way. Left out, Mollie sends them to
-    // redirect_url. See the return page below.
+    // ?order=<id> appended the same way. Left out, they land on
+    // redirect_url with &canceled=1. See the return page below.
     'cancel_url' => \dry\abs_url('cart/'),
 
     // The one webhook route (below), as Mollie must reach it from
@@ -297,10 +297,12 @@ The `order` parameter identifies, it does not authenticate — decide there
 who may see the order, exactly as dry-ecommerce's docs say about
 references.
 
-A configured `cancel_url` is a second such page, under the same rules.
-Landing there says the visitor clicked cancel, not that the payment is
-canceled: the webhook may not have arrived yet, so the order can still
-read pending. Read the order's state there too.
+Without a `cancel_url`, a visitor who cancels lands on this same page with
+`canceled=1` added; a configured `cancel_url` is a second such page.
+Either way the same rules hold. Landing there says the visitor clicked
+cancel, not that the payment is canceled: the webhook may not have
+arrived yet, so the order can still read pending. Read the order's state
+there too.
 
 ## Test mode
 

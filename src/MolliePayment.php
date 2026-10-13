@@ -343,18 +343,21 @@ class MolliePayment implements PaymentGatewayInterface
     }
 
     /**
-     * The configured cancel page, as the return page has it, or null: left
-     * out, Mollie sends a visitor who cancels to the return page. Either way
-     * the webhook, not the page, decides the payment's state.
+     * The configured cancel page, as the return page has it, or else the
+     * return page itself with `canceled=1`, so it can tell a visitor who
+     * clicked cancel apart. Either way the webhook, not the page, decides
+     * the payment's state.
      *
      * @param Order $order
-     * @return string|null
+     * @return string
      */
-    private function cancelUrl(Order $order): ?string
+    private function cancelUrl(Order $order): string
     {
         $url = $this->configuredUrl('mollie.cancel_url');
 
-        return $url === '' ? null : $this->withOrder($url, $order);
+        return $url === ''
+            ? $this->returnUrl($order) . '&canceled=1'
+            : $this->withOrder($url, $order);
     }
 
     /**
