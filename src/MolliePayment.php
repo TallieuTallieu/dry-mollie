@@ -121,6 +121,7 @@ class MolliePayment implements PaymentGatewayInterface
             // Built here, not injected, so a bad API key fails inside this try.
             $mollie = $this->clients->make();
 
+            // A null option is left out by the SDK, so Mollie's default holds.
             $molliePayment = $mollie->payments->create([
                 'amount' => [
                     'currency' => 'EUR',
@@ -130,15 +131,15 @@ class MolliePayment implements PaymentGatewayInterface
                 ],
                 'description' => (string) $order->order_id,
                 'redirectUrl' => $this->returnUrl($order),
+                'cancelUrl' => $this->cancelUrl($order),
                 'webhookUrl' => $this->configuredUrl('mollie.webhook_url'),
                 'metadata' => [
                     'order_id' => (int) $order->id,
                     'reference' => (string) $order->order_id,
                 ],
-                ...$this->cancelUrl($order),
-                ...$this->locale(),
-                ...$this->methods(),
-                ...$this->billingAddress($order),
+                'locale' => $this->locale(),
+                'method' => $this->methods(),
+                'billingAddress' => $this->billingAddress($order),
             ]);
         } catch (MollieException) {
             // The root of every Mollie failure; see docs/gateway.md.
@@ -342,31 +343,29 @@ class MolliePayment implements PaymentGatewayInterface
     }
 
     /**
-     * The configured cancel page, as the return page has it, or nothing:
-     * left out, Mollie sends a visitor who cancels to the return page.
-     * Either way the webhook, not the page, decides the payment's state.
+     * The configured cancel page, as the return page has it, or null: left
+     * out, Mollie sends a visitor who cancels to the return page. Either way
+     * the webhook, not the page, decides the payment's state.
      *
      * @param Order $order
-     * @return array{cancelUrl?: string}
+     * @return string|null
      */
-    private function cancelUrl(Order $order): array
+    private function cancelUrl(Order $order): ?string
     {
         $url = $this->configuredUrl('mollie.cancel_url');
 
-        return $url === ''
-            ? []
-            : ['cancelUrl' => $this->withOrder($url, $order)];
+        return $url === '' ? null : $this->withOrder($url, $order);
     }
 
     /**
-     * The configured checkout language, or nothing: left out, Mollie goes by
+     * The configured checkout language, or null: left out, Mollie goes by
      * the browser. `mollie.locale` is one locale, or a map from the page's
      * language (`Response::$language`) to one. Anything Mollie would refuse
      * is left out too — a wrong locale must not cost the payment.
      *
-     * @return array{locale?: string}
+     * @return string|null
      */
-    private function locale(): array
+    private function locale(): ?string
     {
         $configured = $this->config->get('mollie.locale');
 
@@ -374,20 +373,18 @@ class MolliePayment implements PaymentGatewayInterface
             ? $configured[(string) \dry\http\Response::$language] ?? null
             : $configured;
 
-        return in_array($locale, self::LOCALES, true)
-            ? ['locale' => $locale]
-            : [];
+        return in_array($locale, self::LOCALES, true) ? $locale : null;
     }
 
     /**
-     * The configured payment methods, or nothing: left out, Mollie offers
+     * The configured payment methods, or null: left out, Mollie offers
      * every method the profile has enabled. One method skips Mollie's
      * selection screen; a list narrows it. Not checked against Mollie's
      * vocabulary — which methods exist is the profile's business.
      *
-     * @return array{method?: string|list<string>}
+     * @return string|list<string>|null
      */
-    private function methods(): array
+    private function methods(): string|array|null
     {
         $configured = $this->config->get('mollie.methods');
 
@@ -396,7 +393,7 @@ class MolliePayment implements PaymentGatewayInterface
         }
 
         if (!is_array($configured)) {
-            return [];
+            return null;
         }
 
         $methods = array_values(
@@ -407,9 +404,9 @@ class MolliePayment implements PaymentGatewayInterface
         );
 
         return match (count($methods)) {
-            0 => [],
-            1 => ['method' => $methods[0]],
-            default => ['method' => $methods],
+            0 => null,
+            1 => $methods[0],
+            default => $methods,
         };
     }
 
@@ -417,42 +414,45 @@ class MolliePayment implements PaymentGatewayInterface
      * The order's frozen identity and billing address, so Mollie's checkout
      * knows who pays — bank transfer mails its instructions to the email.
      * Each field goes only if Mollie would take it, and the address only
-     * with what Mollie requires of one: an email, or a whole postal address.
-     * A badly typed order must not cost the payment.
+     * with what Mollie requires of one: an email, or a whole postal address;
+     * else null. A badly typed order must not cost the payment.
      *
      * @param Order $order
-     * @return array{billingAddress?: array<string, string>}
+     * @return array<string, string>|null
      */
-    private function billingAddress(Order $order): array
+    private function billingAddress(Order $order): ?array
     {
-        $address = array_filter(
+        $email = filter_var(trim($order->getEmail()), FILTER_VALIDATE_EMAIL);
+        $postal = $this->postalAddress($order);
+
+        if ($email === false && $postal === null) {
+            return null;
+        }
+
+        return array_filter(
             [
                 'givenName' => $this->personName($order->getFirstName()),
                 'familyName' => $this->personName($order->getLastName()),
                 'organizationName' => trim($order->getCompanyName()),
-                'email' => filter_var(
-                    trim($order->getEmail()),
-                    FILTER_VALIDATE_EMAIL
-                ),
-                ...$this->postalAddress($order),
+                'email' => $email,
+                'streetAndNumber' => $postal['streetAndNumber'] ?? null,
+                'streetAdditional' => $postal['streetAdditional'] ?? null,
+                'postalCode' => $postal['postalCode'] ?? null,
+                'city' => $postal['city'] ?? null,
+                'country' => $postal['country'] ?? null,
             ],
             fn($value): bool => is_string($value) && $value !== ''
         );
-
-        $complete =
-            isset($address['email']) || isset($address['streetAndNumber']);
-
-        return $complete ? ['billingAddress' => $address] : [];
     }
 
     /**
-     * The billing address in Mollie's fields, or nothing unless it is
-     * whole: street, postal code, city and an ISO 3166-1 alpha-2 country.
+     * The billing address in Mollie's fields, or null unless it is whole:
+     * street, postal code, city and an ISO 3166-1 alpha-2 country.
      *
      * @param Order $order
-     * @return array<string, string>
+     * @return array<string, string>|null
      */
-    private function postalAddress(Order $order): array
+    private function postalAddress(Order $order): ?array
     {
         $billing = $order->getBillingAddress();
 
@@ -467,7 +467,7 @@ class MolliePayment implements PaymentGatewayInterface
             $city === '' ||
             preg_match('/^[A-Z]{2}$/', $country) !== 1
         ) {
-            return [];
+            return null;
         }
 
         return [
