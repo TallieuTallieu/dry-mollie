@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tnt\Mollie;
 
+use dry\Debug;
+use dry\log\Log;
 use Mollie\Api\Exceptions\MollieException;
 use Mollie\Api\Http\Data\Money as MollieMoney;
 use Mollie\Api\Resources\Chargeback;
@@ -114,6 +116,10 @@ class MolliePayment implements PaymentGatewayInterface
         // The return URL and description need the package's model; the
         // package only ever places those.
         if (!$order instanceof Order) {
+            $this->debugLog('Payment refused: not the package order model', [
+                'order_class' => $order::class,
+            ]);
+
             return new PaymentRefused();
         }
 
@@ -122,7 +128,7 @@ class MolliePayment implements PaymentGatewayInterface
             $mollie = $this->clients->make();
 
             // A null option is left out by the SDK, so Mollie's default holds.
-            $molliePayment = $mollie->payments->create([
+            $payload = [
                 'amount' => [
                     'currency' => 'EUR',
                     // The order's money is integer cents; Mollie wants
@@ -140,9 +146,21 @@ class MolliePayment implements PaymentGatewayInterface
                 'locale' => $this->locale(),
                 'method' => $this->methods(),
                 'billingAddress' => $this->billingAddress($order),
+            ];
+
+            $this->debugLog('Creating payment', [
+                'order_id' => (int) $order->id,
+                'payload' => $this->withoutPersonalData($payload),
             ]);
-        } catch (MollieException) {
+
+            $molliePayment = $mollie->payments->create($payload);
+        } catch (MollieException $exception) {
             // The root of every Mollie failure; see docs/gateway.md.
+            $this->debugLog('Payment refused by Mollie', [
+                'order_id' => (int) $order->id,
+                'exception' => $exception,
+            ]);
+
             return new PaymentRefused();
         }
 
@@ -150,8 +168,20 @@ class MolliePayment implements PaymentGatewayInterface
 
         if ($checkoutUrl === null) {
             // Nowhere to send the visitor: as dead as a refused payment.
+            $this->debugLog('Payment refused: no checkout url', [
+                'order_id' => (int) $order->id,
+                'payment_id' => $molliePayment->id,
+                'status' => $this->mollieStatus($molliePayment),
+            ]);
+
             return new PaymentRefused($molliePayment->id);
         }
+
+        $this->debugLog('Payment created', [
+            'order_id' => (int) $order->id,
+            'payment_id' => $molliePayment->id,
+            'checkout_url' => $checkoutUrl,
+        ]);
 
         return new PaymentRedirect($molliePayment->id, $checkoutUrl);
     }
@@ -182,11 +212,27 @@ class MolliePayment implements PaymentGatewayInterface
             ],
         ]);
 
-        return new PaymentReport(
+        $report = new PaymentReport(
             $payment->id,
             $this->statusFor($payment),
             $this->movementsOf($payment)
         );
+
+        $this->debugLog('Payment reported', [
+            'payment_id' => $report->paymentId,
+            'mollie_status' => $this->mollieStatus($payment),
+            'status' => $report->status->value,
+            'movements' => array_map(
+                fn(Movement $movement): array => [
+                    'kind' => $movement->kind->value,
+                    'reference' => $movement->reference,
+                    'amount' => $movement->amount,
+                ],
+                $report->movements
+            ),
+        ]);
+
+        return $report;
     }
 
     /**
@@ -509,6 +555,58 @@ class MolliePayment implements PaymentGatewayInterface
             (str_contains($url, '?') ? '&' : '?') .
             'order=' .
             (int) $order->id;
+    }
+
+    /**
+     * The payload as it may be logged: the billing address only by the
+     * fields it carries, never their values.
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function withoutPersonalData(array $payload): array
+    {
+        if (is_array($payload['billingAddress'] ?? null)) {
+            $payload['billingAddress'] = array_keys($payload['billingAddress']);
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Mollie's own word for the payment's status, as it may be logged: the
+     * SDK hands an enum, or the raw string for a status it does not know.
+     *
+     * @param Payment $payment
+     * @return string
+     */
+    private function mollieStatus(Payment $payment): string
+    {
+        return is_string($payment->status)
+            ? $payment->status
+            : $payment->status->value;
+    }
+
+    /**
+     * Extra logging to the app log while dry's debug mode is on. A log that
+     * cannot be written must not cost the payment, so its failure is
+     * dropped — in debug mode dry's Log throws for a missing logger.
+     *
+     * @param string $message
+     * @param array<string, mixed> $context
+     * @return void
+     */
+    private function debugLog(string $message, array $context = []): void
+    {
+        if (!Debug::enabled()) {
+            return;
+        }
+
+        try {
+            Log::default_info('Mollie: ' . $message, $context);
+        } catch (\Throwable) {
+            // Logging is best effort; see above.
+        }
     }
 
     /**

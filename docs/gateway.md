@@ -310,6 +310,12 @@ there too.
   checkout shows a status picker instead of moving money. The full
   webhook flow runs — but only if `webhook_url` is publicly reachable,
   so tunnel your local environment or test webhooks on staging.
+- With dry's debug mode on (`\dry\Debug::enable()`), the gateway logs to
+  the app log (`log/app/app.log`), each line prefixed `Mollie:`: the
+  payload `pay()` sends — the billing address by its fields only, never
+  their values — the payment it got back, why a payment was refused, and
+  the status and movements `reportOf()` read. A log that cannot be written
+  never costs the payment.
 - The package's own suite runs against Mollie's mock client
   (`Mollie\Api\Fake\MockMollieClient`) — no network, no key. Copy that
   arrangement for project-level tests: the gateway asks
