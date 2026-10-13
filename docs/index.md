@@ -13,16 +13,16 @@ provider package copies.
 
 ## At a glance
 
-| Key (`mollie.php`) | Meaning                                                 |
-| ------------------ | ------------------------------------------------------- |
-| `api_key`          | Mollie API key (`test_...` / `live_...`), from the env  |
-| `redirect_url`     | The return page; the gateway appends `order=<id>`       |
-| `cancel_url`       | Optional; the cancel page, `order=<id>` appended too    |
-| `webhook_url`      | The project's one webhook route, as Mollie reaches it   |
-| `locale`           | Optional; checkout language, or a page-language map     |
-| `methods`          | Optional; the payment method, or list of them, offered  |
-| `retries`          | Optional; retries on a dropped connection (default `5`) |
-| `retry_delay_ms`   | Optional; the linear backoff step (default `1000`)      |
+| Key (`mollie.php`) | Meaning                                                  |
+| ------------------ | -------------------------------------------------------- |
+| `api_key`          | Mollie API key (`test_...` / `live_...`), from the env   |
+| `redirect_url`     | The return page; the gateway appends `order=<id>`        |
+| `cancel_url`       | Optional; the cancel page (default: return + `canceled`) |
+| `webhook_url`      | The project's one webhook route, as Mollie reaches it    |
+| `locale`           | Optional; checkout language, or a page-language map      |
+| `methods`          | Optional; the payment method, or list of them, offered   |
+| `retries`          | Optional; retries on a dropped connection (default `5`)  |
+| `retry_delay_ms`   | Optional; the linear backoff step (default `1000`)       |
 
 The gateway reports and dry-ecommerce writes: `pay()` answers what it did,
 `reportOf()` answers what Mollie says now, and the package's payment ledger
