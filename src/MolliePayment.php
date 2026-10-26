@@ -11,6 +11,7 @@ use Mollie\Api\Http\Data\Money as MollieMoney;
 use Mollie\Api\Resources\Chargeback;
 use Mollie\Api\Resources\Payment;
 use Mollie\Api\Resources\Refund;
+use Mollie\Api\Types\PaymentMethod;
 use Mollie\Api\Types\PaymentQuery;
 use Oak\Contracts\Config\RepositoryInterface;
 use Tnt\Ecommerce\Contracts\OrderInterface;
@@ -29,9 +30,10 @@ use Tnt\Mollie\Contracts\MollieClientFactoryInterface;
 
 /**
  * The Mollie gateway on dry-ecommerce's payment ledger: pay() creates the
- * Mollie payment and says so, reportOf() tells what Mollie knows about it.
- * It reports and the package writes — no `payment_id`, no `payment_status`,
- * no events, no redirect. See docs/gateway.md.
+ * Mollie payment and says so, reportOf() tells what Mollie knows about it:
+ * its status, its money and how it was paid. It reports and the package
+ * writes — no `payment_id`, no `payment_status`, no events, no redirect.
+ * See docs/gateway.md.
  */
 class MolliePayment implements PaymentGatewayInterface
 {
@@ -215,13 +217,17 @@ class MolliePayment implements PaymentGatewayInterface
         $report = new PaymentReport(
             $payment->id,
             $this->statusFor($payment),
-            $this->movementsOf($payment)
+            $this->movementsOf($payment),
+            method: $this->methodOf($payment),
+            cardLabel: $this->cardLabelOf($payment)
         );
 
         $this->debugLog('Payment reported', [
             'payment_id' => $report->paymentId,
             'mollie_status' => $this->mollieStatus($payment),
             'status' => $report->status->value,
+            'method' => $report->method,
+            'card_label' => $report->cardLabel,
             'movements' => array_map(
                 fn(Movement $movement): array => [
                     'kind' => $movement->kind->value,
@@ -336,6 +342,39 @@ class MolliePayment implements PaymentGatewayInterface
         }
 
         return $movements;
+    }
+
+    /**
+     * Mollie's id for the method the payment was paid with (`bancontact`,
+     * `creditcard`), or null while the visitor has not picked one. The SDK
+     * hands an enum, or the raw string for a method it does not know.
+     *
+     * @param Payment $payment
+     * @return string|null
+     */
+    private function methodOf(Payment $payment): ?string
+    {
+        $method = $payment->method;
+
+        if ($method instanceof PaymentMethod) {
+            return $method->value;
+        }
+
+        return is_string($method) && $method !== '' ? $method : null;
+    }
+
+    /**
+     * The card's brand ("Mastercard"), which Mollie names in the details of
+     * a paid card payment; else null.
+     *
+     * @param Payment $payment
+     * @return string|null
+     */
+    private function cardLabelOf(Payment $payment): ?string
+    {
+        $label = $payment->details->cardLabel ?? null;
+
+        return is_string($label) && $label !== '' ? $label : null;
     }
 
     /**

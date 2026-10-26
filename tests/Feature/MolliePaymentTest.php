@@ -17,6 +17,7 @@ use Mollie\Api\Http\PendingRequest;
 use Mollie\Api\Http\Requests\CreatePaymentRequest;
 use Oak\Config\Repository;
 use Tests\Support\NetworkFailure;
+use Tnt\Ecommerce\Model\Order;
 use Tnt\Ecommerce\Payment\EntryKind;
 use Tnt\Ecommerce\Payment\PaymentRedirect;
 use Tnt\Ecommerce\Payment\PaymentRefused;
@@ -129,6 +130,10 @@ it('settles a zero total on the spot, like NullPayment', function (): void {
     expect($report->movements[0]->kind)->toBe(EntryKind::Captured);
     expect($report->movements[0]->reference)->toBe($report->paymentId);
     expect($report->movements[0]->amount)->toBe(0);
+
+    // No provider took part: dry-ecommerce reads the €0 capture as free.
+    expect($report->method)->toBeNull();
+    expect($report->cardLabel)->toBeNull();
 });
 
 it('mints a fresh free payment per placement', function (): void {
@@ -159,6 +164,8 @@ it('reads a free order as paid once the ledger has it', function (): void {
     );
 
     expect($order->getPaymentStatus())->toBe(PaymentStatus::Paid);
+    expect($order->getPaymentMethod())->toBe(Order::PAYMENT_METHOD_FREE);
+    expect($order->getPaymentCardLabel())->toBeNull();
 });
 
 it('answers refused however the payment fails', function (
