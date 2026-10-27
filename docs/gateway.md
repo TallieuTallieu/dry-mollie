@@ -330,8 +330,8 @@ there too.
   the app log (`log/app/app.log`), each line prefixed `Mollie:`: the
   payload `pay()` sends — the billing address by its fields only, never
   their values — the payment it got back, why a payment was refused, and
-  the status, method, card label and movements `reportOf()` read. A log that cannot be written
-  never costs the payment.
+  the status, method, card label and movements `reportOf()` read. A log
+  that cannot be written never costs the payment.
 - The package's own suite runs against Mollie's mock client
   (`Mollie\Api\Fake\MockMollieClient`) — no network, no key. Copy that
   arrangement for project-level tests: the gateway asks
