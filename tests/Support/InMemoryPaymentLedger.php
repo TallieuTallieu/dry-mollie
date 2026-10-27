@@ -13,7 +13,8 @@ use Tnt\Ecommerce\Payment\PaymentLedger;
  * The production ledger over its writes: entries land in memory and on the
  * order, and `payment_status` moves without a connection. Holds the table's
  * UNIQUE (`provider`, `kind`, `reference`) too, so a duplicate write fails
- * here the way it would in MySQL. Same as dry-ecommerce's own.
+ * here the way it would in MySQL. Like dry-ecommerce's own, without its
+ * contended status moves: one request at a time here.
  */
 final class InMemoryPaymentLedger extends PaymentLedger
 {
