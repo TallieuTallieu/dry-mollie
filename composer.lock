@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e5de99405d6bd5af32a8741c7e8d7a35",
+    "content-hash": "3b04a76f53ee067bbebfe557e958600c",
     "packages": [
         {
             "name": "aws/aws-crt-php",
@@ -3110,16 +3110,16 @@
         },
         {
             "name": "tallieutallieu/dry-ecommerce",
-            "version": "3.13.4",
+            "version": "3.15.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/TallieuTallieu/dry-ecommerce",
-                "reference": "7094cee745d4b15e03c6f7cf51c02485d1858b14"
+                "reference": "f3d1df29ec4322d1cc62cbcb4d045b4cbd294e5d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/TallieuTallieu/dry-ecommerce/zipball/7094cee745d4b15e03c6f7cf51c02485d1858b14",
-                "reference": "7094cee745d4b15e03c6f7cf51c02485d1858b14",
+                "url": "https://api.github.com/repos/TallieuTallieu/dry-ecommerce/zipball/f3d1df29ec4322d1cc62cbcb4d045b4cbd294e5d",
+                "reference": "f3d1df29ec4322d1cc62cbcb4d045b4cbd294e5d",
                 "shasum": ""
             },
             "require": {
@@ -3153,7 +3153,7 @@
                 "proprietary"
             ],
             "description": "E-commerce package",
-            "time": "2026-10-05T13:55:04+00:00"
+            "time": "2026-10-27T10:45:33+00:00"
         },
         {
             "name": "tallieutallieu/oak",
