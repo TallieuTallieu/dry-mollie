@@ -30,4 +30,5 @@ Three things, all project-side and all documented in
 3. A return page that reads the order's own payment status.
 
 The gateway reports and never writes: dry-ecommerce's payment ledger
-records what `pay()` and `reportOf()` answer and derives `payment_status`.
+records what `pay()` and `reportOf()` answer — the money, the status and how
+it was paid — and derives `payment_status`.

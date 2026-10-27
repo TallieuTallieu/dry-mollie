@@ -80,7 +80,8 @@ it: the entries a shop already has would be orphaned.
 
 - **`reportOf($paymentId)`** asks Mollie's API about the payment — never
   the webhook body, which carries only the id — and answers with a
-  `PaymentReport`: a status and every money movement Mollie knows of.
+  `PaymentReport`: a status, every money movement Mollie knows of, and how
+  the payment was paid.
 
     **The status** is Mollie's view of the payment:
 
@@ -121,6 +122,21 @@ it: the entries a shop already has would be orphaned.
     Refunds and chargebacks come embedded in the one `GET`
     (`embed=refunds,chargebacks`). Pass the embeds to the SDK as a list:
     `mollie-api-php` drops a comma string without a word.
+
+    **How it was paid** goes along as the report's `method` and
+    `cardLabel`:
+
+    | Mollie has                                 | Report                                                    |
+    | ------------------------------------------ | --------------------------------------------------------- |
+    | `method` (`bancontact`, `creditcard`, …)   | `method`, Mollie's own id — one the SDK does not know too |
+    | `details.cardLabel` (`Mastercard`, …)      | `cardLabel`                                               |
+    | no method yet (the visitor has not chosen) | both `null`                                               |
+
+    dry-ecommerce keeps them on the `captured` entry, so they count only
+    once the payment is paid, and reads them back with
+    `$order->getPaymentMethod()` and `getPaymentCardLabel()`. A free order's
+    settlement reports no method: dry-ecommerce reads its €0 capture as
+    `free`. See dry-ecommerce's `docs/payment.md`, "How it was paid".
 
     **It reports everything, every time.** The ledger deduplicates on
     `(provider, kind, reference)` and writes only what it does not hold
@@ -314,8 +330,8 @@ there too.
   the app log (`log/app/app.log`), each line prefixed `Mollie:`: the
   payload `pay()` sends — the billing address by its fields only, never
   their values — the payment it got back, why a payment was refused, and
-  the status and movements `reportOf()` read. A log that cannot be written
-  never costs the payment.
+  the status, method, card label and movements `reportOf()` read. A log
+  that cannot be written never costs the payment.
 - The package's own suite runs against Mollie's mock client
   (`Mollie\Api\Fake\MockMollieClient`) — no network, no key. Copy that
   arrangement for project-level tests: the gateway asks

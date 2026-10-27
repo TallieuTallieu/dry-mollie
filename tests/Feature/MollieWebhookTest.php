@@ -63,10 +63,58 @@ it('maps every Mollie status onto the package vocabulary', function (
 
 it('reports a paid payment with its capture', function (): void {
     expect(reportFor(paidMolliePaymentBody('tr_first')))->toEqual(
-        new PaymentReport('tr_first', PaymentStatus::Paid, [
-            new Movement(EntryKind::Captured, 'tr_first', 1250),
+        new PaymentReport(
+            'tr_first',
+            PaymentStatus::Paid,
+            [new Movement(EntryKind::Captured, 'tr_first', 1250)],
+            method: 'ideal'
+        )
+    );
+});
+
+it('reports how the payment was paid', function (string $method): void {
+    $report = reportFor(
+        molliePaymentBody('tr_first', 'paid', [
+            'paidAt' => '2026-09-01T10:05:00+00:00',
+            'method' => $method,
         ])
     );
+
+    expect($report->method)->toBe($method);
+    expect($report->cardLabel)->toBeNull();
+})->with([
+    'bancontact' => ['bancontact'],
+    'ideal' => ['ideal'],
+    // A method the SDK has no case for still reads as Mollie's own word.
+    'one the SDK does not know' => ['somethingnew'],
+]);
+
+it('reports the brand of a card', function (): void {
+    $report = reportFor(
+        molliePaymentBody('tr_first', 'paid', [
+            'paidAt' => '2026-09-01T10:05:00+00:00',
+            'method' => 'creditcard',
+            'details' => [
+                'cardHolder' => 'T. TEST',
+                'cardNumber' => '6787',
+                'cardLabel' => 'Mastercard',
+                'cardFingerprint' => 'fp_test',
+                'cardSecurity' => 'normal',
+            ],
+        ])
+    );
+
+    expect($report->method)->toBe('creditcard');
+    expect($report->cardLabel)->toBe('Mastercard');
+});
+
+it('reports no method while the visitor has not picked one', function (): void {
+    $report = reportFor(
+        molliePaymentBody('tr_first', 'open', ['method' => null])
+    );
+
+    expect($report->method)->toBeNull();
+    expect($report->cardLabel)->toBeNull();
 });
 
 it('asks for refunds and chargebacks in the same call', function (): void {
@@ -247,6 +295,29 @@ it('moves the order through the package webhook and ledger', function (
         PaymentStatus::Paid,
     ],
 ]);
+
+it('keeps the method and card brand on the order it paid', function (): void {
+    $client = new MockMollieClient([
+        GetPaymentRequest::class => MockResponse::ok(
+            molliePaymentBody('tr_first', 'paid', [
+                'paidAt' => '2026-09-01T10:05:00+00:00',
+                'method' => 'creditcard',
+                'details' => ['cardLabel' => 'Visa'],
+            ])
+        ),
+    ]);
+
+    $ledger = makeLedger();
+    $order = orderPayingWith($ledger, 'tr_first');
+
+    (new InMemoryPaymentWebhook(makeGateway($client), $ledger))->handle(
+        'tr_first'
+    );
+
+    expect($order->getPaymentStatus())->toBe(PaymentStatus::Paid);
+    expect($order->getPaymentMethod())->toBe('creditcard');
+    expect($order->getPaymentCardLabel())->toBe('Visa');
+});
 
 it('writes nothing for a replayed report', function (): void {
     $body = paidMolliePaymentBody(

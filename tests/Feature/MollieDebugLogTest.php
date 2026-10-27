@@ -158,6 +158,8 @@ it('logs what reportOf read', function (): void {
         'payment_id' => 'tr_first',
         'mollie_status' => 'paid',
         'status' => 'paid',
+        'method' => 'ideal',
+        'card_label' => null,
         'movements' => [
             ['kind' => 'captured', 'reference' => 'tr_first', 'amount' => 1250],
         ],
