@@ -38,6 +38,7 @@ use Tnt\Mollie\Contracts\PaysAtDeskInterface;
  */
 class MolliePayment implements PaymentGatewayInterface
 {
+    
     /**
      * The name every ledger entry is filed under. Never change it: the
      * entries a shop already has would be orphaned.
