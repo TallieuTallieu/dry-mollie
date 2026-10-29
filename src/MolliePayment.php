@@ -27,6 +27,7 @@ use Tnt\Ecommerce\Payment\PaymentReport;
 use Tnt\Ecommerce\Payment\PaymentSettled;
 use Tnt\Ecommerce\Payment\PaymentStatus;
 use Tnt\Mollie\Contracts\MollieClientFactoryInterface;
+use Tnt\Mollie\Contracts\PaysAtDeskInterface;
 
 /**
  * The Mollie gateway on dry-ecommerce's payment ledger: pay() creates the
@@ -102,7 +103,8 @@ class MolliePayment implements PaymentGatewayInterface
 
     /**
      * Create the Mollie payment for an order and answer where the visitor
-     * must go. A zero total is settled on the spot, like NullPayment.
+     * must go. A zero total is settled on the spot, like NullPayment, and so
+     * is cash at the desk; the desk's terminal gets a point-of-sale payment.
      *
      * @param OrderInterface $order
      * @return PaymentOutcome
@@ -111,9 +113,27 @@ class MolliePayment implements PaymentGatewayInterface
      */
     public function pay(OrderInterface $order): PaymentOutcome
     {
+        // Free beats cash: a €0 order at the desk files no method either.
         if ($order->getTotal() <= 0) {
-            return $this->settleForFree();
+            return $this->settleOnTheSpot('free', 0);
         }
+
+        $desk =
+            $order instanceof PaysAtDeskInterface
+                ? $order->getDeskPayment()
+                : null;
+
+        // The money is in the till; Mollie never hears of it, so nothing
+        // about it can be refunded through Mollie.
+        if ($desk === DeskPayment::Cash) {
+            return $this->settleOnTheSpot(
+                'cash',
+                $order->getTotal(),
+                DeskPayment::Cash->value
+            );
+        }
+
+        $atTerminal = $desk === DeskPayment::Terminal;
 
         // The return URL and description need the package's model; the
         // package only ever places those.
@@ -125,30 +145,25 @@ class MolliePayment implements PaymentGatewayInterface
             return new PaymentRefused();
         }
 
+        $terminalId = $atTerminal
+            ? $this->configuredString('mollie.terminal_id')
+            : '';
+
+        if ($atTerminal && $terminalId === '') {
+            $this->debugLog('Payment refused: no terminal configured', [
+                'order_id' => (int) $order->id,
+            ]);
+
+            return new PaymentRefused();
+        }
+
         try {
             // Built here, not injected, so a bad API key fails inside this try.
             $mollie = $this->clients->make();
 
-            // A null option is left out by the SDK, so Mollie's default holds.
-            $payload = [
-                'amount' => [
-                    'currency' => 'EUR',
-                    // The order's money is integer cents; Mollie wants
-                    // '12.50' strings.
-                    'value' => Money::toDecimal($order->getTotal()),
-                ],
-                'description' => (string) $order->order_id,
-                'redirectUrl' => $this->returnUrl($order),
-                'cancelUrl' => $this->cancelUrl($order),
-                'webhookUrl' => $this->configuredUrl('mollie.webhook_url'),
-                'metadata' => [
-                    'order_id' => (int) $order->id,
-                    'reference' => (string) $order->order_id,
-                ],
-                'locale' => $this->locale(),
-                'method' => $this->methods(),
-                'billingAddress' => $this->billingAddress($order),
-            ];
+            $payload = $atTerminal
+                ? $this->terminalPayload($order, $terminalId)
+                : $this->onlinePayload($order);
 
             $this->debugLog('Creating payment', [
                 'order_id' => (int) $order->id,
@@ -164,6 +179,20 @@ class MolliePayment implements PaymentGatewayInterface
             ]);
 
             return new PaymentRefused();
+        }
+
+        if ($atTerminal) {
+            // A terminal payment has no checkout: the cashier waits on the
+            // shop's own return page while the customer pays on the device.
+            $this->debugLog('Terminal payment created', [
+                'order_id' => (int) $order->id,
+                'payment_id' => $molliePayment->id,
+            ]);
+
+            return new PaymentRedirect(
+                $molliePayment->id,
+                $this->returnUrl($order)
+            );
         }
 
         $checkoutUrl = $molliePayment->getCheckoutUrl();
@@ -242,22 +271,97 @@ class MolliePayment implements PaymentGatewayInterface
     }
 
     /**
-     * A zero total: nothing to charge, so a €0 capture under a minted id,
-     * unique per placement so a re-placement is an attempt of its own.
+     * A payment Mollie never sees (a zero total, cash at the desk): a capture
+     * of the amount under a minted id, unique per placement so a
+     * re-placement is an attempt of its own.
      *
+     * @param string $prefix
+     * @param int $amount
+     * @param string|null $method
      * @return PaymentSettled
      *
      * @throws \Random\RandomException If the system has no secure randomness.
      */
-    private function settleForFree(): PaymentSettled
-    {
-        $paymentId = 'free_' . bin2hex(random_bytes(8));
+    private function settleOnTheSpot(
+        string $prefix,
+        int $amount,
+        ?string $method = null
+    ): PaymentSettled {
+        $paymentId = $prefix . '_' . bin2hex(random_bytes(8));
 
         return new PaymentSettled(
-            new PaymentReport($paymentId, PaymentStatus::Paid, [
-                new Movement(EntryKind::Captured, $paymentId, 0),
-            ])
+            new PaymentReport(
+                $paymentId,
+                PaymentStatus::Paid,
+                [new Movement(EntryKind::Captured, $paymentId, $amount)],
+                method: $method
+            )
         );
+    }
+
+    /**
+     * What Mollie is sent for an online payment. A null option is left out
+     * by the SDK, so Mollie's default holds.
+     *
+     * @param Order $order
+     * @return array<string, mixed>
+     */
+    private function onlinePayload(Order $order): array
+    {
+        return [
+            ...$this->commonPayload($order),
+            'redirectUrl' => $this->returnUrl($order),
+            'cancelUrl' => $this->cancelUrl($order),
+            'locale' => $this->locale(),
+            'method' => $this->methods(),
+            'billingAddress' => $this->billingAddress($order),
+        ];
+    }
+
+    /**
+     * What Mollie is sent for a payment on the desk's terminal. Mollie pushes
+     * it to the device; there is no checkout to return from or cancel.
+     *
+     * @param Order $order
+     * @param string $terminalId
+     * @return array<string, mixed>
+     *
+     * @see https://docs.mollie.com/reference/create-payment
+     */
+    private function terminalPayload(Order $order, string $terminalId): array
+    {
+        return [
+            ...$this->commonPayload($order),
+            'method' => DeskPayment::Terminal->value,
+            // Not a named field of the SDK's request: it passes unknown keys
+            // through to Mollie as they are.
+            'terminalId' => $terminalId,
+        ];
+    }
+
+    /**
+     * What every Mollie payment is sent: the money, the reference, where to
+     * report and which order it is for.
+     *
+     * @param Order $order
+     * @return array<string, mixed>
+     */
+    private function commonPayload(Order $order): array
+    {
+        return [
+            'amount' => [
+                'currency' => 'EUR',
+                // The order's money is integer cents; Mollie wants '12.50'
+                // strings.
+                'value' => Money::toDecimal($order->getTotal()),
+            ],
+            'description' => (string) $order->order_id,
+            'webhookUrl' => $this->configuredString('mollie.webhook_url'),
+            'metadata' => [
+                'order_id' => (int) $order->id,
+                'reference' => (string) $order->order_id,
+            ],
+        ];
     }
 
     /**
@@ -422,7 +526,7 @@ class MolliePayment implements PaymentGatewayInterface
     private function returnUrl(Order $order): string
     {
         return $this->withOrder(
-            $this->configuredUrl('mollie.redirect_url'),
+            $this->configuredString('mollie.redirect_url'),
             $order
         );
     }
@@ -438,7 +542,7 @@ class MolliePayment implements PaymentGatewayInterface
      */
     private function cancelUrl(Order $order): string
     {
-        $url = $this->configuredUrl('mollie.cancel_url');
+        $url = $this->configuredString('mollie.cancel_url');
 
         return $url === ''
             ? $this->returnUrl($order) . '&canceled=1'
@@ -649,12 +753,12 @@ class MolliePayment implements PaymentGatewayInterface
     }
 
     /**
-     * A URL from configuration, or '' when unset.
+     * A string from configuration (a URL, the terminal id), or '' when unset.
      *
      * @param string $key
      * @return string
      */
-    private function configuredUrl(string $key): string
+    private function configuredString(string $key): string
     {
         $configured = $this->config->get($key);
 
