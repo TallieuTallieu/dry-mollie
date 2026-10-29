@@ -156,6 +156,39 @@ becomes the order's current one. The old attempt's entries stay, and a
 late webhook for it still finds the order through the ledger: if that old
 payment gets paid after all, its capture counts.
 
+## At the desk
+
+A shop that takes orders at its desk can have the gateway take the money
+there too. dry-ecommerce hands `pay()` nothing but the order, so the order
+says how: its model implements `Tnt\Mollie\Contracts\PaysAtDeskInterface`,
+whose `getDeskPayment()` answers a `Tnt\Mollie\DeskPayment`, or `null` for
+an ordinary online payment. An order model without the interface always
+pays online.
+
+| `getDeskPayment()`                        | `pay()` answers                                            |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| `DeskPayment::Cash`                       | `PaymentSettled`: paid on the spot, method `cash`          |
+| `DeskPayment::Terminal`                   | `PaymentRedirect($id, <return page>)`, once Mollie took it |
+| `DeskPayment::Terminal`, no `terminal_id` | `PaymentRefused()`, without asking Mollie                  |
+
+- **Cash** settles like a zero total: a `Paid` report with one `captured`
+  movement of the whole total, under a payment id minted per placement
+  (`cash_…`), reported with the method `cash`. Mollie never hears of it,
+  so a cash order cannot be refunded through Mollie: the money goes back
+  over the counter. A cash order with a zero total settles as free, with
+  no method.
+- **The terminal** gets a Mollie point-of-sale payment (`pointofsale`, on
+  the `terminalId` from `mollie.terminal_id`) with the amount,
+  description, metadata and webhook of an online one, and no return,
+  cancel, locale or billing details — Mollie pushes it to the device and
+  there is no checkout. The cashier is sent to the return page with the
+  order (the same `redirect_url`, `?order=<id>`) to wait there while the
+  customer pays; the webhook settles it as it settles any payment, and
+  the capture carries the method `pointofsale` and the card's brand.
+  A terminal payment the customer cancels or that times out reports
+  `canceled` or `expired`, and the order is re-placeable as after any
+  failed payment.
+
 ## What the project wires
 
 ### 1. Configuration — `config/mollie.php`
@@ -185,6 +218,10 @@ return [
 
     // Optional; see Checkout options below. One method, or a list.
     'methods' => ['bancontact', 'creditcard', 'ideal'],
+
+    // Optional; the Mollie terminal at the desk (term_...). Only an order
+    // paying on the terminal needs it; see At the desk above.
+    'terminal_id' => getenv('MOLLIE_TERMINAL_ID'),
 
     // Optional; see Retries below. These are the defaults.
     'retries' => 5,
@@ -302,7 +339,9 @@ match ($order->getPaymentStatus()) {
     PaymentStatus::Paid,
     PaymentStatus::PartiallyRefunded => /* thank-you */,
     PaymentStatus::Pending => /* "confirming your payment…" — the webhook
-                                 is still on its way; poll or refresh */,
+                                 is still on its way; poll or refresh. For
+                                 a terminal payment the cashier waits here
+                                 while the customer pays */,
     default => /* failed/canceled/expired/refunded: offer the basket
                   again — the order is re-placeable and the cart still
                   stands */,

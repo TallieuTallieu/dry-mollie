@@ -7,9 +7,9 @@ provider package copies.
 ## Pages
 
 - [Installation](installation.md) — requirements and the VCS repositories
-- [The gateway](gateway.md) — what the package does, the three things a
-  project wires (config, the webhook route, the return page), test-mode
-  notes
+- [The gateway](gateway.md) — what the package does, paying at the desk
+  (cash or the Mollie terminal), the three things a project wires (config,
+  the webhook route, the return page), test-mode notes
 
 ## At a glance
 
@@ -21,6 +21,7 @@ provider package copies.
 | `webhook_url`      | The project's one webhook route, as Mollie reaches it    |
 | `locale`           | Optional; checkout language, or a page-language map      |
 | `methods`          | Optional; the payment method, or list of them, offered   |
+| `terminal_id`      | Optional; the desk's Mollie terminal (`term_...`)        |
 | `retries`          | Optional; retries on a dropped connection (default `5`)  |
 | `retry_delay_ms`   | Optional; the linear backoff step (default `1000`)       |
 
