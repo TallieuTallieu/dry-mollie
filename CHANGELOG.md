@@ -5,6 +5,12 @@ follow [Semantic Versioning](https://semver.org). New entries are generated from
 commit messages by [dry-ci](https://github.com/TallieuTallieu/dry-ci); past
 entries may be edited by hand.
 
+## 6.1.3 - 2026-11-02
+
+### Features
+
+- Add uuid to withOrder() return function to prevent guessable order numbers
+
 ## 6.1.2 - 2026-10-29
 
 ### Features
