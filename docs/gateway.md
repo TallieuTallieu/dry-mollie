@@ -182,7 +182,7 @@ pays online.
   description, metadata and webhook of an online one, and no return,
   cancel, locale or billing details — Mollie pushes it to the device and
   there is no checkout. The cashier is sent to the return page with the
-  order (the same `redirect_url`, `?order=<id>`) to wait there while the
+  order (the same `redirect_url`, `?order=<id>` or `<uuid>`) to wait there while the
   customer pays; the webhook settles it as it settles any payment, and
   the capture carries the method `pointofsale` and the card's brand.
   A terminal payment the customer cancels or that times out reports
@@ -199,8 +199,15 @@ return [
     'api_key' => getenv('MOLLIE_API_KEY'),
 
     // The return page (below). The gateway appends ?order=<id> — or
-    // &order=<id> when the URL already carries a query.
+    // &order=<id> when the URL already carries a query; <uuid> instead of
+    // <id> with return_order below.
     'redirect_url' => \dry\abs_url('checkout/return/'),
+
+    // Optional: 'uuid' (MolliePayment::RETURN_ORDER_UUID) appends the
+    // order's uuid instead of its row id — to the return and the cancel
+    // page alike; an order without one keeps its row id. Any other value
+    // is ignored and, in debug mode, logged. See the return page below.
+    'return_order' => 'uuid',
 
     // Optional: where a visitor who cancels on Mollie's checkout lands,
     // ?order=<id> appended the same way. Left out, they land on
@@ -328,12 +335,19 @@ hours, which is exactly the recovery you want.
 
 ### 3. The return page
 
-Where Mollie sends the visitor back, `?order=<row id>` appended. The
+Where Mollie sends the visitor back, `?order=<row id>` appended — or, with
+`'return_order' => 'uuid'`, `?order=<uuid>` (dry-ecommerce 3.17's
+`Order::$uuid`; find it with `OrderRepository::byUuid()`). The row id is a
+count of the shop's orders and the next one is a guess away; the uuid gives
+nothing away. Either way it identifies, it does not authenticate. The
 webhook may or may not have arrived first, so the page reads **the
 order's own state** and concludes nothing from the visit itself:
 
 ```php
-$order = OrderRepository::create()->byId($orderId)->firstOrNull();
+// With 'return_order' => 'uuid':
+$order = OrderRepository::create()->byUuid($orderRef)->firstOrNull();
+// Without it:
+$order = OrderRepository::create()->byId($orderRef)->firstOrNull();
 
 match ($order->getPaymentStatus()) {
     PaymentStatus::Paid,

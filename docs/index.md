@@ -17,6 +17,7 @@ provider package copies.
 | ------------------ | -------------------------------------------------------- |
 | `api_key`          | Mollie API key (`test_...` / `live_...`), from the env   |
 | `redirect_url`     | The return page; the gateway appends `order=<id>`        |
+| `return_order`     | Optional; `uuid` appends the order's uuid, not its id    |
 | `cancel_url`       | Optional; the cancel page (default: return + `canceled`) |
 | `webhook_url`      | The project's one webhook route, as Mollie reaches it    |
 | `locale`           | Optional; checkout language, or a page-language map      |
