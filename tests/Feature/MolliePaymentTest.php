@@ -110,6 +110,62 @@ it('sends the configured cancel url with the order', function (): void {
     });
 });
 
+it('names the order by its uuid when the shop asks for it', function (): void {
+    // The row id in a return URL is a count of the shop's orders, and the
+    // next one is a guess away; the uuid is neither.
+    $order = orderAwaitingPayment();
+    $order->uuid = '3f2b8c1e-5d4a-4b6c-9e8f-0a1b2c3d4e5f';
+
+    $payload = createdPaymentPayload(
+        [
+            'return_order' => 'uuid',
+            'cancel_url' => 'https://shop.example/cart/?from=mollie',
+        ],
+        $order
+    );
+
+    expect($payload['redirectUrl'])
+        ->toBe(
+            'https://shop.example/checkout/return/?order=3f2b8c1e-5d4a-4b6c-9e8f-0a1b2c3d4e5f'
+        )
+        ->and($payload['cancelUrl'])
+        ->toBe(
+            'https://shop.example/cart/?from=mollie&order=3f2b8c1e-5d4a-4b6c-9e8f-0a1b2c3d4e5f'
+        );
+});
+
+it(
+    'names the order by its uuid on the default cancel page too',
+    function (): void {
+        $order = orderAwaitingPayment();
+        $order->uuid = '3f2b8c1e-5d4a-4b6c-9e8f-0a1b2c3d4e5f';
+
+        $payload = createdPaymentPayload(['return_order' => 'uuid'], $order);
+
+        expect($payload['cancelUrl'])->toBe(
+            'https://shop.example/checkout/return/?order=3f2b8c1e-5d4a-4b6c-9e8f-0a1b2c3d4e5f&canceled=1'
+        );
+    }
+);
+
+it('falls back to the row id for an order without a uuid', function (): void {
+    // A row inserted by hand has none; an empty `order=` would leave the
+    // return page with nothing to find.
+    $payload = createdPaymentPayload(['return_order' => 'uuid']);
+
+    expect($payload['redirectUrl'])->toBe(
+        'https://shop.example/checkout/return/?order=7'
+    );
+});
+
+it('keeps the row id for anything else in return_order', function (): void {
+    $payload = createdPaymentPayload(['return_order' => 'reference']);
+
+    expect($payload['redirectUrl'])->toBe(
+        'https://shop.example/checkout/return/?order=7'
+    );
+});
+
 it('settles a zero total on the spot, like NullPayment', function (): void {
     // No expected responses: any API call would fail the test loudly.
     $gateway = makeGateway(new MockMollieClient([]));

@@ -45,6 +45,12 @@ class MolliePayment implements PaymentGatewayInterface
     private const PROVIDER = 'mollie';
 
     /**
+     * The `mollie.return_order` value that names the order by its uuid in
+     * return and cancel URLs, rather than by its guessable row id.
+     */
+    public const RETURN_ORDER_UUID = 'uuid';
+
+    /**
      * The checkout languages Mollie accepts. A locale outside this list
      * would make Mollie refuse the payment, so it is never sent.
      *
@@ -686,7 +692,9 @@ class MolliePayment implements PaymentGatewayInterface
     }
 
     /**
-     * A URL with the order appended as `order=`.
+     * A URL with the order appended as `order=`: its row id, or with
+     * `mollie.return_order` set to `uuid` its uuid — the id is a count of the
+     * shop's orders and can be guessed. See docs/gateway.md#3-the-return-page.
      *
      * @param string $url
      * @param Order $order
@@ -697,7 +705,47 @@ class MolliePayment implements PaymentGatewayInterface
         return $url .
             (str_contains($url, '?') ? '&' : '?') .
             'order=' .
-            (int) $order->id;
+            rawurlencode($this->orderRef($order));
+    }
+
+    /**
+     * What a return or cancel URL names the order by: its uuid when
+     * `mollie.return_order` asks for it and the order has one, else its row
+     * id. An order without a uuid (a row inserted by hand) still gets a
+     * return page that finds it, and a value other than `uuid` is logged —
+     * a typo must not quietly bring back guessable URLs unnoticed.
+     *
+     * @param Order $order
+     * @return string
+     */
+    private function orderRef(Order $order): string
+    {
+        $returnOrder = $this->configuredString('mollie.return_order');
+        $rowId = (string) (int) $order->id;
+
+        if ($returnOrder === '') {
+            return $rowId;
+        }
+
+        if ($returnOrder !== self::RETURN_ORDER_UUID) {
+            $this->debugLog('Unknown return_order, using the row id', [
+                'return_order' => $returnOrder,
+            ]);
+
+            return $rowId;
+        }
+
+        $uuid = $order->uuid;
+
+        if (!is_string($uuid) || $uuid === '') {
+            $this->debugLog('Order has no uuid, using the row id', [
+                'order' => $rowId,
+            ]);
+
+            return $rowId;
+        }
+
+        return $uuid;
     }
 
     /**
